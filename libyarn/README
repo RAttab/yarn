@@ -1,0 +1,5 @@
+This library contains the runtime kernel for the speculative multi-threading system.
+It's built as a static library but it should not be used directly by the user. Calls
+to the library should be injected automatically by the other components of the system.
+
+More to be added here later.
