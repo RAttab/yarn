@@ -1,0 +1,9 @@
+A Speculative Multi-Threading system used to automatically parallelise a piece of
+code using runtime dependency checking.
+
+The system is composed of :
+
+  - libyarn    the runtime kernel for dependency checking and task scheduling.
+  - yarn       executable used to analyse and inject code into a source file.
+
+More will be added here later.
