@@ -9,26 +9,26 @@ Implements linear probing and
 
 #include "map.h"
 #include "atomic.h"
+#include "alloc.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <string.h>
+#include <assert.h>
 
 
 //! Default capacity of the hash table.
 #define YARN_MAP_DEFAULT_CAPACITY 64
 
 //! Treshold used to determined when the hash table must be resized.
-#define YARN_MAP_LOAD_FACTOR 0.66
+#define YARN_MAP_LOAD_FACTOR 0.66f
+
+//! Treshold when the resize helpers will stop trying to transfer items.
+#define YARN_MAP_HELPER_TRESHOLD 8
 
 
-/*!
-32 or 64 bit hashing function.
-The function is the fmix function from MurmurHash3 which evenly mixes the bits of the 
-of the given variable.
- */
 static inline size_t hash(uintptr_t h, size_t capacity);
-
+static void init_table (struct map_node* table, size_t* capacity);
 static void resize_master (struct yarn_map* m);
 static void resize_helper (struct yarn_map* m);
 
@@ -42,23 +42,34 @@ enum resize_state {
 
 
 struct map_node {
-  yarn_atomic_ptr addr;
-  yarn_atomic_ptr value;
+  struct yarn_atomic_ptr addr;
+  struct yarn_atomic_ptr value;
 };
 
 struct yarn_map {
   struct map_node* table;
-  yarn_atomic_var size;
+  struct yarn_atomic_var size;
   size_t capacity;
 
   struct map_node* new_table;
   size_t new_capacity;
   
-  yarn_atomic_var resize_pos;
-  yarn_atomic_var user_count;
-  yarn_atomic_var resize_count;
-  yarn_atomic_var resize_state;
+  struct yarn_atomic_var resize_pos;
+  struct yarn_atomic_var user_count;
+  struct yarn_atomic_var resize_count;
+  struct yarn_atomic_var resize_state;
 };
+
+
+static void init_table (struct map_node** table, size_t capacity) {
+  size_t table_size = capacity * sizeof(struct map_node);
+
+  *table = yarn_malloc(table_size);
+  for(size_t i = 0; i < capacity; ++i) {
+    yarn_writep(&(*table)[i].addr, NULL);
+    yarn_writep(&(*table)[i].value,NULL;
+  }
+}
 
 
 struct yarn_map* yarn_map_init (size_t capacity) {
@@ -68,17 +79,11 @@ struct yarn_map* yarn_map_init (size_t capacity) {
   if(capacity <= 0)
     capcity = YARN_MAP_DEFAULT_CAPACITY;
 
-  while(map->capacity < capacity*4/3)
+  while(map->capacity < (size_t) ((float)capacity / YARN_MAP_LOAD_FACTOR))
     map->capacity <<= 1;
 
   yarn_writev(&map->size, 0);
-  size_t table_size = map->capacity * sizeof(struct map_node);
-
-  map->table = yarn_malloc(table_size);
-  for(size_t i = 0; i < map->capacity; ++i) {
-    yarn_writep(&map->table[i].addr, NULL);
-    yarn_writep(&map->table[i].value,NULL;
-  }
+  init_table(&map->table, map->capacity);
 
   yarn_writev(&user_count, 0);
   yarn_writev(&resize_count, 0);
@@ -88,8 +93,6 @@ struct yarn_map* yarn_map_init (size_t capacity) {
 
 //! \todo Make sure we get something to clean up the values. Probably a fct ptr.
 void yarn_map_free (struct yarn_map* m) {
-  if (m->new_table != NULL)
-    yarn_free(m->new_table);
   yarn_free(m->table);
   yarn_free(m);
 }
@@ -97,6 +100,7 @@ void yarn_map_free (struct yarn_map* m) {
 
 
 void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
+  assert (value == NULL);
   
   yarn_incv(&m->user_count);
   if (m->resize_state == state_nothing) {
@@ -138,27 +142,151 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
     n++;
   }
 
-  yarn_decv(&m->size);
+  //! \todo need something a bit better then this just on the off chance.
+  assert (return_val != NULL);
 
   float load_factor = (float)yarn_readv(&m->size) / (float)(m->capacity);
   if (load_factor > YARN_MAP_LOAD_FACTOR)
     resize_master(m);
   
+  // User count is handled specially by resize_master to avoid the double resize problem.
+  else 
+    yarn_decv(&m->user_count);
+  
   return return_val;
 }
 
+
+/*!
+Transfers an item at position \c pos in the current table to the new table.
+Note that this can be called concurrently by the master and all its helper for a single
+location. Also, an item can be transfered at most once so calling the function twice
+for the operation will result in one of those calls in being a no-op.
+ */
+static void transfer_item (struct yarn_map* m, size_t pos) {
+  void* addr = yarn_readp(&m->table[pos].addr);
+  
+  if (probe_addr == NULL || yarn_casp(&m->table[pos].addr, addr, NULL) != addr) {
+    return;
+  }
+
+  const size_t h = hash(addr, m->new_capacity);
+  size_t i = h;
+  size_t n = 0;
+  
+  while (n < m->new_capacity) {
+    if (yarn_casp_fast(&m->new_table[pos].addr, NULL, addr) == NULL) {
+      void* probe_value = yarn_readp(&m->table[pos].value);
+      yarn_writep(&m->new_table[pos].value, probe_value);
+      break;
+    }
+    
+    i = (i+1) % m->new_capacity;
+    n++;
+  }
+}
+
+
+/*!
+Main resizer that linearly transfers all the items.
+There can be at most one master resizer working at any given time. Any other thread that
+tries to resize will become a helper. This function also handles the decrement of the
+user count value so the caller should not decrement it if calling this function.
+
+To avoid any concurrency issues, no threads should be allowed to read the table while
+\code resize_state != state_nothing \endcode. This function will then wait for \code
+user_count == 1 \endcode (the last user being the master) before manipulating the original
+table. Once the transfer is completed, the function will wait for \code helper_count == 0
+\endcode before swapping the old table with the new table and cleaning up.
+ */
 static void resize_master (struct yarn_map* m) {
-  //! \todo
+
+  // Get master ownership. If we fail, then become a helper.
+  if (yarn_casv_fast(&m->resize_state, state_nothing, state_preparing) != state_nothing) {
+    // The master keeps its user_count to avoid ending up with 2 master
+    // If we fallback to a helper then we give up our user_count ownership.
+    yarn_decv(&m->user_count);
+    resize_helper();
+    return;
+  }
+
+  // Init the new table.
+  m->new_capacity = m->capacity *2;
+  init_table(&m->new_table, m->new_capacity);
+  
+  // let regular users drain out.
+  yarn_spinv_eq(&m->user_count, 1);
+
+  // Start the transfer
+  yarn_writev(&m->resize_pos, 0);
+  yarn_writev(&m->resize_state, state_resizing);
+  for (size_t pos = 0; pos < m->capacity; ++pos, yarn_incv(&m->resize_pos)) {
+    transfer_item(m, pos);
+  }
+
+  // Wait for the helpers to finish.
+  yarn_writev(&m->resize_state, state_waiting);
+  yarn_spinv_eq(&m->helper_count, 0);
+
+  // swap the tables and clean up.
+  yarn_free(m->table);
+  m->table = m->new_table;
+  m->new_table = NULL;
+  m->capacity = m->new_capacity;
+  m->new_capacity = NULL;
+
+  // we're done.
+  yarn_writev(&m->resize_state, state_nothing);
+  yarn_decv(&m->user_count);
 }
 
- 
+
+/*!
+Helper resizer function that randomly picks an item to transfer.
+This function \b MUST \b NOT be called with an incremented user_count. 
+ */ 
 static void resize_helper (struct yarn_map* m) {
-  //! \todo
+  yarn_incv(&m->helper_count);
+
+  if (yarn_readv(&m->resize_state) == state_nothing)
+    yarn_decv(&m->helper_count);
+    return;
+
+  // wait for preperations to be over.
+  yarn_spinv_neq(&m->resize_state, state_preparing);
+
+  // start transfering items.
+  while (yarn_readv(&m->resize_state) == state_resizing) {
+    size_t min_pos = yarn_readv(&m->resize_pos) +1;
+    size_t range = m->capacity - min_pos;
+
+    if (range > YARN_MAP_HELPER_TRESHOLD) {
+      size_t pos = min_pos + rnd(range);
+      transfer_item(m, pos);
+    }
+    // Not enough items left to make it worth it to continue.
+    else {
+      break;
+    }
+  }
+
+  // Wait for master to complete transfering items.
+  yarn_decv(&m->helper_count);
+  yarn_spinv_neq(&m->resize_state, state_resizing);
+
+  // wait for master to finish cleaning up.
+  yarn_spinv_neq(&m->resize_state, state_waiting);
 }
 
 
 
+/*!
+32 or 64 bit hashing function.
+The function is the fmix function from MurmurHash3 written by Austin Appleby which evenly 
+mixes every bits of the of the given variable.
 
+Original can be found here: http://code.google.com/p/smhasher/
+ */
 static inline size_t hash(uintptr_t h, size_t capacity) {
 
 #ifdef UINTPTR_MAX == UINT32_MAX
