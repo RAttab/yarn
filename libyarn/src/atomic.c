@@ -27,8 +27,10 @@ extern inline yarn_atomp_t yarn_casp (struct yarn_atomic_ptr* a,
 				      void* oldval,
 				      void* newval);
 
-extern inline void yarn_spinv (struct yarn_atomic_var* a, yarn_atomv_t newval);
-extern inline void yarn_spinp (struct yarn_atomic_ptr* a, yarn_atomp_t newptr);
+extern inline void yarn_spinv_eq (struct yarn_atomic_var* a, yarn_atomv_t newval);
+extern inline void yarn_spinv_neq (struct yarn_atomic_var* a, yarn_atomv_t oldval);
+extern inline void yarn_spinp_eq (struct yarn_atomic_ptr* a, yarn_atomp_t newptr);
+extern inline void yarn_spinp_neq (struct yarn_atomic_ptr* a, yarn_atomp_t oldptr);
 
 
 

@@ -55,6 +55,7 @@ inline yarn_atomv_t yarn_readv(struct yarn_atomic_var* a) {return a->var;}
 inline void* yarn_readp(struct yarn_atomic_ptr* a) {return (void*)a->ptr;}
 
 //! Atomically writes the variable.
+//! \todo Need to make this a full memory barrier op.
 inline void yarn_writev(struct yarn_atomic_var* a, yarn_atomv_t var) {a->val = var;}
 inline void yarn_writep(struct yarn_atomic_ptr* a, void* ptr) {
   a->ptr = (yarn_atomp_t) ptr;
@@ -93,12 +94,18 @@ Spins until the atomic var is equal to the expected value.
 Should only be used when expecting a short waiting period.
 \todo Could add a yield or wait(0) if we're spinning for too long. Could use a timeout too.
 */
-inline void yarn_spinv (struct yarn_atomic_var* a, yarn_atomv_t newval) {
+inline void yarn_spinv_eq (struct yarn_atomic_var* a, yarn_atomv_t newval) {
   while(yarn_readv(a) != newval);
 }
+inline void yarn_spinv_neq (struct yarn_atomic_var* a, yarn_atomv_t oldval) {
+  while(yarn_readv(a) == oldval);
+}
 
-inline void yarn_spinp (struct yarn_atomic_ptr* a, yarn_atomp_t newptr) {
+inline void yarn_spinp_eq (struct yarn_atomic_ptr* a, yarn_atomp_t newptr) {
   while(yarn_readp(a) != newptr);
+}
+inline void yarn_spinp_neq (struct yarn_atomic_ptr* a, yarn_atomp_t oldptr) {
+  while(yarn_readp(a) == oldptr);
 }
 
 
