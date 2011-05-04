@@ -1,4 +1,8 @@
+
+# Emacs backup files.
 .#*#
 \#*#
 *~
+
+# Build outputs
 *.o

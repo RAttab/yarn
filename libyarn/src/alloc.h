@@ -42,8 +42,6 @@ inline void* yarn_malloc (size_t size) {
 */
 inline void* yarn_memalign (size_t alignment, size_t size) {
 
-  assert (alignment
-
   void* ptr;
   int err = posix_memalign(&ptr, alignment, size);
   
@@ -56,6 +54,18 @@ inline void* yarn_memalign (size_t alignment, size_t size) {
 inline void yarn_free (void* ptr) {
   (void) free(ptr);
 }
+
+
+
+/*! 
+\todo Pool allocators
+
+We don't really need a full pool alocator like tc malloc since we pretty much always only
+need 1 extra temp var per thread. Easier implementation would be to simply create an array
+where each element belongs to one trhead and contains a pre-allocated object.
+
+
+ */
 
 
 #endif //YARN_ALLOC_H_
