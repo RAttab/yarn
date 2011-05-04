@@ -29,12 +29,14 @@ Type for atomic variables.
 The size will change depending on the platform but is guaranteed to be at least 32 bits.
  */
 typedef uint_fast32_t yarn_atomv_t;
+#define YARN_ATOMV_UNLIKELY UINT_FAST32_MAX
 
 /*!
 Type for atomic pointers.
 No guarantees are made about the size except that it's enough to hold a pointer.
  */
 typedef uintprt_t yarn_atomp_t;
+#define YARN_ATOM_UNLIKELY UINTPTR_MAX
 
 
 /*!
@@ -42,55 +44,70 @@ Basic types for atomic variables and pointers.
 The struct is provided as a safety proxy and should never be manipulated directly. 
 Use the functions in the concurrency.h header instead. 
  */
-struct yarn_atomic_var { 
+typedef struct { 
   volatile yarn_atomv_t var; 
-};
-struct yarn_atomic_ptr {
+} yarn_atomic_var;
+typedef struct {
   volatile yarn_atomp_t ptr;
-};
+} yarn_atomic_ptr;
 
 
 //! Atomically reads the variable.
-inline yarn_atomv_t yarn_readv(struct yarn_atomic_var* a) {
-  yarn_mem_barrier();
+inline yarn_atomv_t yarn_readv(yarn_atomic_var* a) {
   return a->var;
 }
-inline void* yarn_readp(struct yarn_atomic_ptr* a) {
-  yarn_mem_barrier();
+inline void* yarn_readp(yarn_atomic_ptr* a) {
   return (void*)a->ptr;
 }
 
-//! Atomically writes the variable.
-//! \todo Review mem barriers. Might be better to let the user decide.
-inline void yarn_writev(struct yarn_atomic_var* a, yarn_atomv_t var) {
-  a->var = var;
-  yarn_mem_barrier();
+//! Atomically reads the variable while making sure no memory ops can cross the call.
+inline yarn_atomv_t yarn_readv_barrier(yarn_atomic_var* a) {
+  return __sync_var_compare_and_swap(&a->var, 
+				     YARN_ATOMV_UNLIKELY, 
+				     YARN_ATOMV_UNLIKELY);
 }
-inline void yarn_writep(struct yarn_atomic_ptr* a, void* ptr) {
+inline void* yarn_readp_barrier(yarn_atomic_ptr* a) {
+  return (void*)__sync_var_compare_and_swap(&a->ptr, 
+					    YARN_ATOMP_UNLIKELY, 
+					    YARN_ATOMP_UNLIKELY);
+}
+
+//! Atomically writes the variable.
+inline void yarn_writev(yarn_atomic_var* a, yarn_atomv_t var) {
+  a->var = var;
+}
+inline void yarn_writep(yarn_atomic_ptr* a, void* ptr) {
   a->ptr = (yarn_atomp_t) ptr;
-  yarn_mem_barrier();
+}
+
+//! Atomically writes the variable while making sure no memory ops can cross the call.
+inline void yarn_writev_barrier(yarn_atomic_var* a, yarn_atomv_t var) {
+  __sync_bool_compare_and_swap(&a->var, a->var, var);
+}
+inline void yarn_writep_barrier(yarn_atomic_ptr* a, yarn_atomp_t ptr) {
+  __sync_bool_compare_and_swap(&a->ptr, a->ptr, ptr);
 }
 
 
 //! Atomically increments the variable.
-inline void yarn_incv(struct yarn_atomic_var* a) {
+inline yarn_atomv_t yarn_incv(yarn_atomic_var* a) {
   __sync_add_and_fetch(&a->var, 1);
 }
 //! Atomically decrements the variable.
-inline void yarn_decv(struct yarn_atomic_var* a) {
+inline yarn_atomp_t yarn_decv(yarn_atomic_var* a) {
   __sync_sub_and_fetch(&a->var, 1);
 }
 
 
 //! Compare and swap which returns the value of the variable before the swap.
-inline yarn_atomv_t yarn_casv (struct yarn_atomic_var* a, 
+inline yarn_atomv_t yarn_casv (yarn_atomic_var* a, 
 			       yarn_atomv_t oldval, 
 			       yarn_atomv_t newval) 
 {
   return __sync_val_compare_and_swap(&a->var, oldval, newval);
 }
 
-inline yarn_atomp_t yarn_casp (struct yarn_atomic_ptr* a,
+inline yarn_atomp_t yarn_casp (yarn_atomic_ptr* a,
 			       void* oldval,
 			       void* newval)
 {
@@ -105,7 +122,7 @@ This version attempts to skip the memory barrier by doing a barrier free check
 on the value. Note that this screws with the linearilization point so care must be
 taken when used.
  */
-inline yarn_atomv_t yarn_casv_fast (struct yarn_atomic_var* a,
+inline yarn_atomv_t yarn_casv_fast (yarn_atomic_var* a,
 				    yarn_atomv_t oldval, 
 				    yarn_atomv_t newval) 
 {
@@ -116,7 +133,7 @@ inline yarn_atomv_t yarn_casv_fast (struct yarn_atomic_var* a,
   return __sync_val_compare_and_swap(&a->var, oldval, newval);
 }
 
-inline yarn_atomp_t yarn_casp_fast (struct yarn_atomic_ptr* a,
+inline yarn_atomp_t yarn_casp_fast (yarn_atomic_ptr* a,
 				    void* oldval, 
 				    void* newval) 
 {
@@ -134,20 +151,29 @@ inline yarn_atomp_t yarn_casp_fast (struct yarn_atomic_ptr* a,
 /*!
 Spins until the atomic var is equal to the expected value.
 Should only be used when expecting a short waiting period.
+These ops are also a full memory barriers.
 \todo Could add a yield or wait(0) if we're spinning for too long. Could use a timeout too.
 */
-inline void yarn_spinv_eq (struct yarn_atomic_var* a, yarn_atomv_t newval) {
-  while(yarn_readv(a) != newval);
+inline void yarn_spinv_eq (yarn_atomic_var* a, yarn_atomv_t newval) {
+  yarn_mem_barrier(); //! \todo Should be Release semantic
+  while(a->var != newval);
+  yarn_mem_barrier(); //! \todo Should be Acquisition semantic
 }
-inline void yarn_spinv_neq (struct yarn_atomic_var* a, yarn_atomv_t oldval) {
-  while(yarn_readv(a) == oldval);
+inline void yarn_spinv_neq (yarn_atomic_var* a, yarn_atomv_t oldval) {
+  yarn_mem_barrier();
+  while(a->var == oldval);
+  yarn_mem_barrier();
 }
 
-inline void yarn_spinp_eq (struct yarn_atomic_ptr* a, yarn_atomp_t newptr) {
-  while(yarn_readp(a) != newptr);
+inline void yarn_spinp_eq (yarn_atomic_ptr* a, yarn_atomp_t newptr) {
+  yarn_mem_barrier();
+  while(a->ptr != newptr);
+  yarn_mem_barrier();
 }
-inline void yarn_spinp_neq (struct yarn_atomic_ptr* a, yarn_atomp_t oldptr) {
-  while(yarn_readp(a) == oldptr);
+inline void yarn_spinp_neq (yarn_atomic_ptr* a, yarn_atomp_t oldptr) {
+  yarn_mem_barrier();
+  while(a->ptr == oldptr);
+  yarn_mem_barrier();
 }
 
 

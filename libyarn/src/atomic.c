@@ -13,11 +13,17 @@ inline or if the user tries to grab the address.
 extern inline yarn_atomv_t yarn_readv(struct yarn_atomic_var* a);
 extern inline void* yarn_readp(struct yarn_atomic_ptr* a);
 
+extern inline yarn_atomv_t yarn_readv_barrier(struct yarn_atomic_var* a);
+extern inline void* yarn_readp_barrier(struct yarn_atomic_ptr* a);
+
 extern inline void yarn_writev(struct yarn_atomic_var* a, yarn_atomv_t var);
 extern inline void yarn_writep(struct yarn_atomic_ptr* a, void* ptr);
 
-extern inline void yarn_incv(struct yarn_atomic_var* a);
-extern inline void yarn_decv(struct yarn_atomic_var* a);
+extern inline void yarn_writev_barrier(yarn_atomic_var* a, yarn_atomv_t var);
+extern inline void yarn_writep_barrier(yarn_atomic_ptr* a, yarn_atomp_t ptr);
+
+extern inline yarn_atomv_t yarn_incv(struct yarn_atomic_var* a);
+extern inline yarn_atomp_t yarn_decv(struct yarn_atomic_var* a);
 
 
 extern inline yarn_atomv_t yarn_casv (struct yarn_atomic_var* a, 
