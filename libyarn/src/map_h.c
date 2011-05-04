@@ -18,6 +18,7 @@ Implements linear probing and
 
 
 //! Default capacity of the hash table.
+//! \todo Should be f(num_core) to avoid having 2 legitimate resizes in a row.
 #define YARN_MAP_DEFAULT_CAPACITY 64
 
 //! Treshold used to determined when the hash table must be resized.
@@ -42,22 +43,22 @@ enum resize_state {
 
 
 struct map_node {
-  struct yarn_atomic_ptr addr;
-  struct yarn_atomic_ptr value;
+  yarn_atomic_ptr addr;
+  yarn_atomic_ptr value;
 };
 
 struct yarn_map {
   struct map_node* table;
-  struct yarn_atomic_var size;
+  yarn_atomic_var size;
   size_t capacity;
 
   struct map_node* new_table;
   size_t new_capacity;
   
-  struct yarn_atomic_var resize_pos;
-  struct yarn_atomic_var user_count;
-  struct yarn_atomic_var resize_count;
-  struct yarn_atomic_var resize_state;
+  yarn_atomic_var resize_pos;
+  yarn_atomic_var user_count;
+  yarn_atomic_var resize_count;
+  yarn_atomic_var resize_state;
 };
 
 
@@ -98,12 +99,11 @@ void yarn_map_free (struct yarn_map* m) {
 }
 
 
-
 void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
   assert (value == NULL);
   
   yarn_incv(&m->user_count);
-  if (m->resize_state == state_nothing) {
+  if (yarn_readv(&m->resize_state) != state_nothing) {
     yarn_decv(&m->user_count);
     resize_helper(m);
     yarn_incv(&m->user_count);
@@ -113,11 +113,12 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
   void* return_val = NULL;
   size_t i = h;
   size_t n = 0;
+  size_t new_size = yarn_readv(&m->size);
 
   // linear probe
   while (n < m->capacity) {
-    struct yarn_atomp_t* probe_addr = &m->table[i].addr;
-    struct yarn_atomp_t* probe_val = &m->table[i].value;
+    yarn_atomp_t* probe_addr = &m->table[i].addr;
+    yarn_atomp_t* probe_val = &m->table[i].value;
     void* read_addr = yarn_readp(probe_addr);
 
     // Did we find our value?
@@ -131,10 +132,10 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
     // Do we have an empty bucket to add the value?
     else if (read_addr == NULL) {
       if (yarn_casp(probe_addr, NULL, (voir*) addr) != NULL)
-	continue; // retry the same bucket if weren't able to add.
+	continue; // retry the same bucket if we weren't able to add.
       yarn_writep(probe_val, value);
-      yarn_incv(&m->size);
       return_val = value;
+      new_size = yarn_incv(&m->size);
       break;
     }
 
@@ -142,18 +143,17 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
     n++;
   }
 
-  //! \todo need something a bit better then this just on the off chance.
-  assert (return_val != NULL);
-
-  float load_factor = (float)yarn_readv(&m->size) / (float)(m->capacity);
-  if (load_factor > YARN_MAP_LOAD_FACTOR)
+  float load_factor = (float)new_size / (float)m->capacity;
+  if (load_factor > YARN_MAP_LOAD_FACTOR) {
     resize_master(m);
-  
+  }
   // User count is handled specially by resize_master to avoid the double resize problem.
-  else 
+  else {
     yarn_decv(&m->user_count);
+  }
   
-  return return_val;
+  // If we were not able to add the item, then try again.
+  return return_val != NULL ? return_val : yarn_map_probe(m, addr, value);
 }
 
 
@@ -164,9 +164,9 @@ location. Also, an item can be transfered at most once so calling the function t
 for the operation will result in one of those calls in being a no-op.
  */
 static void transfer_item (struct yarn_map* m, size_t pos) {
+
   void* addr = yarn_readp(&m->table[pos].addr);
-  
-  if (probe_addr == NULL || yarn_casp(&m->table[pos].addr, addr, NULL) != addr) {
+  if (addr == NULL || yarn_casp(&m->table[pos].addr, addr, NULL) != addr) {
     return;
   }
 
@@ -191,7 +191,10 @@ static void transfer_item (struct yarn_map* m, size_t pos) {
 Main resizer that linearly transfers all the items.
 There can be at most one master resizer working at any given time. Any other thread that
 tries to resize will become a helper. This function also handles the decrement of the
-user count value so the caller should not decrement it if calling this function.
+user count value so the caller should not decrement it if calling this function. This is
+done to ensure that we can resolve any master selection conflict before any resizing
+is done. Otherwise we risk of having two conflicting resizes being started one after the
+other.
 
 To avoid any concurrency issues, no threads should be allowed to read the table while
 \code resize_state != state_nothing \endcode. This function will then wait for \code
@@ -219,13 +222,13 @@ static void resize_master (struct yarn_map* m) {
 
   // Start the transfer
   yarn_writev(&m->resize_pos, 0);
-  yarn_writev(&m->resize_state, state_resizing);
+  yarn_writev_barrier(&m->resize_state, state_resizing);
   for (size_t pos = 0; pos < m->capacity; ++pos, yarn_incv(&m->resize_pos)) {
     transfer_item(m, pos);
   }
 
   // Wait for the helpers to finish.
-  yarn_writev(&m->resize_state, state_waiting);
+  yarn_writev_barrier(&m->resize_state, state_waiting);
   yarn_spinv_eq(&m->helper_count, 0);
 
   // swap the tables and clean up.
@@ -233,24 +236,26 @@ static void resize_master (struct yarn_map* m) {
   m->table = m->new_table;
   m->new_table = NULL;
   m->capacity = m->new_capacity;
-  m->new_capacity = NULL;
+  m->new_capacity = 0;
 
   // we're done.
-  yarn_writev(&m->resize_state, state_nothing);
+  yarn_writev_barrier(&m->resize_state, state_nothing);
   yarn_decv(&m->user_count);
 }
 
 
 /*!
 Helper resizer function that randomly picks an item to transfer.
-This function \b MUST \b NOT be called with an incremented user_count. 
+This function \b MUST \b NOT be called with an incremented \c user_count. This function
+follows the concurrency specifications of the \c resize_master function.
  */ 
 static void resize_helper (struct yarn_map* m) {
   yarn_incv(&m->helper_count);
 
-  if (yarn_readv(&m->resize_state) == state_nothing)
+  if (yarn_readv(&m->resize_state) == state_nothing) {
     yarn_decv(&m->helper_count);
     return;
+  }
 
   // wait for preperations to be over.
   yarn_spinv_neq(&m->resize_state, state_preparing);
@@ -265,9 +270,8 @@ static void resize_helper (struct yarn_map* m) {
       transfer_item(m, pos);
     }
     // Not enough items left to make it worth it to continue.
-    else {
+    else 
       break;
-    }
   }
 
   // Wait for master to complete transfering items.
@@ -282,7 +286,7 @@ static void resize_helper (struct yarn_map* m) {
 
 /*!
 32 or 64 bit hashing function.
-The function is the fmix function from MurmurHash3 written by Austin Appleby which evenly 
+The function is the fmix functions from MurmurHash3 written by Austin Appleby which evenly 
 mixes every bits of the of the given variable.
 
 Original can be found here: http://code.google.com/p/smhasher/
