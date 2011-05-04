@@ -51,14 +51,24 @@ struct yarn_atomic_ptr {
 
 
 //! Atomically reads the variable.
-inline yarn_atomv_t yarn_readv(struct yarn_atomic_var* a) {return a->var;}
-inline void* yarn_readp(struct yarn_atomic_ptr* a) {return (void*)a->ptr;}
+inline yarn_atomv_t yarn_readv(struct yarn_atomic_var* a) {
+  yarn_mem_barrier();
+  return a->var;
+}
+inline void* yarn_readp(struct yarn_atomic_ptr* a) {
+  yarn_mem_barrier();
+  return (void*)a->ptr;
+}
 
 //! Atomically writes the variable.
-//! \todo Need to make this a full memory barrier op.
-inline void yarn_writev(struct yarn_atomic_var* a, yarn_atomv_t var) {a->val = var;}
+//! \todo Review mem barriers. Might be better to let the user decide.
+inline void yarn_writev(struct yarn_atomic_var* a, yarn_atomv_t var) {
+  a->var = var;
+  yarn_mem_barrier();
+}
 inline void yarn_writep(struct yarn_atomic_ptr* a, void* ptr) {
   a->ptr = (yarn_atomp_t) ptr;
+  yarn_mem_barrier();
 }
 
 
@@ -72,7 +82,7 @@ inline void yarn_decv(struct yarn_atomic_var* a) {
 }
 
 
-//! Compare and swap which returns the value currently in the variable.
+//! Compare and swap which returns the value of the variable before the swap.
 inline yarn_atomv_t yarn_casv (struct yarn_atomic_var* a, 
 			       yarn_atomv_t oldval, 
 			       yarn_atomv_t newval) 
@@ -88,6 +98,38 @@ inline yarn_atomp_t yarn_casp (struct yarn_atomic_ptr* a,
 					     (yarn_atomp_t)oldval, 
 					     (yarn_atomp_t)newval);
 }
+
+/*!
+Compare and swap which returns the value of the variable before the swap.
+This version attempts to skip the memory barrier by doing a barrier free check
+on the value. Note that this screws with the linearilization point so care must be
+taken when used.
+ */
+inline yarn_atomv_t yarn_casv_fast (struct yarn_atomic_var* a,
+				    yarn_atomv_t oldval, 
+				    yarn_atomv_t newval) 
+{
+  yarn_atomv_t var = a->var;
+  if (var != oldval)
+    return var;
+
+  return __sync_val_compare_and_swap(&a->var, oldval, newval);
+}
+
+inline yarn_atomp_t yarn_casp_fast (struct yarn_atomic_ptr* a,
+				    void* oldval, 
+				    void* newval) 
+{
+  void* ptr = (void*) a->ptr;
+  if (ptr != oldval)
+    return ptr;
+
+  return (void*) __sync_val_compare_and_swap(&a->ptr, 
+					     (yarn_atomp_t)oldval, 
+					     (yarn_atomp_t)newval);
+}
+
+				    
 
 /*!
 Spins until the atomic var is equal to the expected value.
