@@ -28,17 +28,11 @@ Implements linear probing and
 #define YARN_MAP_HELPER_TRESHOLD 8
 
 
-static inline size_t hash(uintptr_t h, size_t capacity);
-static void init_table (struct map_node* table, size_t* capacity);
-static void resize_master (struct yarn_map* m);
-static void resize_helper (struct yarn_map* m);
-
-
 enum resize_state {
   state_nothing = 0,
   state_preparing,
   state_resizing,
-  state_waiting;
+  state_waiting
 };
 
 
@@ -57,9 +51,16 @@ struct yarn_map {
   
   yarn_atomic_var resize_pos;
   yarn_atomic_var user_count;
-  yarn_atomic_var resize_count;
+  yarn_atomic_var helper_count;
   yarn_atomic_var resize_state;
 };
+
+
+static inline size_t hash(uintptr_t h, size_t capacity);
+static void init_table (struct map_node** table, size_t capacity);
+static void resize_master (struct yarn_map* m);
+static void resize_helper (struct yarn_map* m);
+
 
 
 static void init_table (struct map_node** table, size_t capacity) {
@@ -68,7 +69,7 @@ static void init_table (struct map_node** table, size_t capacity) {
   *table = yarn_malloc(table_size);
   for(size_t i = 0; i < capacity; ++i) {
     yarn_writep(&(*table)[i].addr, NULL);
-    yarn_writep(&(*table)[i].value,NULL;
+    yarn_writep(&(*table)[i].value, NULL);
   }
 }
 
@@ -76,19 +77,19 @@ static void init_table (struct map_node** table, size_t capacity) {
 struct yarn_map* yarn_map_init (size_t capacity) {
   struct yarn_map* map = yarn_malloc(sizeof(struct yarn_map));
   
-  map->capacity = 1;
-  if(capacity <= 0)
-    capcity = YARN_MAP_DEFAULT_CAPACITY;
-
-  while(map->capacity < (size_t) ((float)capacity / YARN_MAP_LOAD_FACTOR))
+  map->capacity = YARN_MAP_DEFAULT_CAPACITY;
+  size_t load_factor = (float)capacity / YARN_MAP_LOAD_FACTOR;
+  while(map->capacity < load_factor)
     map->capacity <<= 1;
 
   yarn_writev(&map->size, 0);
   init_table(&map->table, map->capacity);
 
-  yarn_writev(&user_count, 0);
-  yarn_writev(&resize_count, 0);
-  yarn_writev(&resize_state, 0);
+  yarn_writev(&map->user_count, 0);
+  yarn_writev(&map->helper_count, 0);
+  yarn_writev(&map->resize_state, 0);
+
+  return map;
 }
 
 
@@ -117,8 +118,8 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
 
   // linear probe
   while (n < m->capacity) {
-    yarn_atomp_t* probe_addr = &m->table[i].addr;
-    yarn_atomp_t* probe_val = &m->table[i].value;
+    yarn_atomic_ptr* probe_addr = &m->table[i].addr;
+    yarn_atomic_ptr* probe_val = &m->table[i].value;
     void* read_addr = yarn_readp(probe_addr);
 
     // Did we find our value?
@@ -131,7 +132,7 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
 
     // Do we have an empty bucket to add the value?
     else if (read_addr == NULL) {
-      if (yarn_casp(probe_addr, NULL, (voir*) addr) != NULL)
+      if (yarn_casp(probe_addr, NULL, (void*) addr) != NULL)
 	continue; // retry the same bucket if we weren't able to add.
       yarn_writep(probe_val, value);
       return_val = value;
@@ -139,7 +140,7 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
       break;
     }
 
-    i = (i+1) % capacity;
+    i = (i+1) % m->capacity;
     n++;
   }
 
@@ -170,7 +171,7 @@ static void transfer_item (struct yarn_map* m, size_t pos) {
     return;
   }
 
-  const size_t h = hash(addr, m->new_capacity);
+  const size_t h = hash((uintptr_t)addr, m->new_capacity);
   size_t i = h;
   size_t n = 0;
   
@@ -209,7 +210,7 @@ static void resize_master (struct yarn_map* m) {
     // The master keeps its user_count to avoid ending up with 2 master
     // If we fallback to a helper then we give up our user_count ownership.
     yarn_decv(&m->user_count);
-    resize_helper();
+    resize_helper(m);
     return;
   }
 
@@ -262,11 +263,11 @@ static void resize_helper (struct yarn_map* m) {
 
   // start transfering items.
   while (yarn_readv(&m->resize_state) == state_resizing) {
-    size_t min_pos = yarn_readv(&m->resize_pos) +1;
+    size_t min_pos = yarn_readv(&m->resize_pos) + YARN_MAP_HELPER_TRESHOLD;
     size_t range = m->capacity - min_pos;
 
     if (range > YARN_MAP_HELPER_TRESHOLD) {
-      size_t pos = min_pos + rnd(range);
+      size_t pos = ((float)rand() / RAND_MAX) * range + min_pos;
       transfer_item(m, pos);
     }
     // Not enough items left to make it worth it to continue.
@@ -293,7 +294,7 @@ Original can be found here: http://code.google.com/p/smhasher/
  */
 static inline size_t hash(uintptr_t h, size_t capacity) {
 
-#ifdef UINTPTR_MAX == UINT32_MAX
+#if (UINTPTR_MAX == UINT32_MAX)
 
   h ^= h >> 16;
   h *= 0x85ebca6b;
@@ -301,7 +302,7 @@ static inline size_t hash(uintptr_t h, size_t capacity) {
   h *= 0xc2b2ae35;
   h ^= h >> 16;
 
-#elif UINTPTR_MAX == UINT64_MAX
+#elif (UINTPTR_MAX == UINT64_MAX)
 
   h ^= h >> 33;
   h *= 0xff51afd7ed558ccdLLU;

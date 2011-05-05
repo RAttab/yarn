@@ -10,11 +10,12 @@ want to clear the table, just free it and re-initialize it.
 
  */
 
-#ifdef YARN_MAP_H_
+#ifndef YARN_MAP_H_
 #define YARN_MAP_H_
 
 
 #include <stdint.h>
+#include <stddef.h>
 
 
 struct yarn_map;

@@ -2,9 +2,8 @@
 \author Rémi Attab
 \license FreeBSD (see LICENSE file)
 
-\brief 
-
-
+Provides the external definitions for inline functions in case the compiler doesn't 
+inline or if the user tries to grab the address.
  */
 
 
@@ -14,3 +13,4 @@
 extern inline void* yarn_malloc (size_t size);
 extern inline void* yarn_memalign (size_t alignment, size_t size);
 extern inline void yarn_free (void* ptr);
+

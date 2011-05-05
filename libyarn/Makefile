@@ -22,10 +22,12 @@
 ##==========================================================================
 
 # The pre-processor and compiler options.
-MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic
+MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
+            -D _POSIX_C_SOURCE=200112L \
+            -Isrc -Iinclude
 
 # The linker options.
-MY_LIBS   =
+MY_LIBS   = libyarn.a
 
 # The pre-processor options used by the cpp (man cpp for more).
 CPPFLAGS  = -Wall
@@ -39,7 +41,7 @@ SRCDIRS   = src test
 
 # The executable file name.
 # If not specified, current directory name or `a.out' will be used.
-PROGRAM   = 
+PROGRAM   = t_libyarn
 
 LIBRARY   = libyarn.a
 
@@ -181,7 +183,7 @@ objs:$(OBJS)
 # Rules for generating archives.
 #-------------------------------------
 %.a:$(OBJS)
-	$(ARCHIVE) $< $@
+	$(ARCHIVE) $@ $(OBJS)
 
 # Rules for generating the tags.
 #-------------------------------------

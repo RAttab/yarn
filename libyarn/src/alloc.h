@@ -9,12 +9,9 @@ pool allocator like tcmalloc.
 
 */ 
 
+
 #ifndef YARN_ALLOC_H_
 #define YARN_ALLOC_H_
-
-
-// Required to get posix_memalign defined in stdlib.
-#define _POSIX_C_SOURCE 200809L
 
 
 #include <stdlib.h>

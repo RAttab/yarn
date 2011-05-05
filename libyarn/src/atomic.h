@@ -12,7 +12,7 @@ ported to other compilers if we ever get there.
 */
 
 
-#ifdef YARN_ATOMIC_H_
+#ifndef YARN_ATOMIC_H_
 #define YARN_ATOMIC_H_
 
 
@@ -35,8 +35,8 @@ typedef uint_fast32_t yarn_atomv_t;
 Type for atomic pointers.
 No guarantees are made about the size except that it's enough to hold a pointer.
  */
-typedef uintprt_t yarn_atomp_t;
-#define YARN_ATOM_UNLIKELY UINTPTR_MAX
+typedef uintptr_t yarn_atomp_t;
+#define YARN_ATOMP_UNLIKELY UINTPTR_MAX
 
 
 /*!
@@ -62,12 +62,12 @@ inline void* yarn_readp(yarn_atomic_ptr* a) {
 
 //! Atomically reads the variable while making sure no memory ops can cross the call.
 inline yarn_atomv_t yarn_readv_barrier(yarn_atomic_var* a) {
-  return __sync_var_compare_and_swap(&a->var, 
+  return __sync_val_compare_and_swap(&a->var, 
 				     YARN_ATOMV_UNLIKELY, 
 				     YARN_ATOMV_UNLIKELY);
 }
 inline void* yarn_readp_barrier(yarn_atomic_ptr* a) {
-  return (void*)__sync_var_compare_and_swap(&a->ptr, 
+  return (void*)__sync_val_compare_and_swap(&a->ptr, 
 					    YARN_ATOMP_UNLIKELY, 
 					    YARN_ATOMP_UNLIKELY);
 }
@@ -95,11 +95,11 @@ inline void yarn_writep_barrier(yarn_atomic_ptr* a, yarn_atomp_t ptr) {
 
 //! Atomically increments the variable.
 inline yarn_atomv_t yarn_incv(yarn_atomic_var* a) {
-  __sync_add_and_fetch(&a->var, 1);
+  return __sync_add_and_fetch(&a->var, 1);
 }
 //! Atomically decrements the variable.
 inline yarn_atomp_t yarn_decv(yarn_atomic_var* a) {
-  __sync_sub_and_fetch(&a->var, 1);
+  return __sync_sub_and_fetch(&a->var, 1);
 }
 
 
@@ -111,10 +111,7 @@ inline yarn_atomv_t yarn_casv (yarn_atomic_var* a,
   return __sync_val_compare_and_swap(&a->var, oldval, newval);
 }
 
-inline yarn_atomp_t yarn_casp (yarn_atomic_ptr* a,
-			       void* oldval,
-			       void* newval)
-{
+inline void* yarn_casp (yarn_atomic_ptr* a, void* oldval, void* newval) {
   return (void*) __sync_val_compare_and_swap(&a->ptr, 
 					     (yarn_atomp_t)oldval, 
 					     (yarn_atomp_t)newval);
@@ -137,10 +134,7 @@ inline yarn_atomv_t yarn_casv_fast (yarn_atomic_var* a,
   return __sync_val_compare_and_swap(&a->var, oldval, newval);
 }
 
-inline yarn_atomp_t yarn_casp_fast (yarn_atomic_ptr* a,
-				    void* oldval, 
-				    void* newval) 
-{
+inline void* yarn_casp_fast (yarn_atomic_ptr* a, void* oldval, void* newval) {
   void* ptr = (void*) a->ptr;
   if (ptr != oldval)
     return ptr;
@@ -169,14 +163,14 @@ inline void yarn_spinv_neq (yarn_atomic_var* a, yarn_atomv_t oldval) {
   yarn_mem_barrier();
 }
 
-inline void yarn_spinp_eq (yarn_atomic_ptr* a, yarn_atomp_t newptr) {
+inline void yarn_spinp_eq (yarn_atomic_ptr* a, void* newptr) {
   yarn_mem_barrier();
-  while(a->ptr != newptr);
+  while(a->ptr != (yarn_atomp_t)newptr);
   yarn_mem_barrier();
 }
-inline void yarn_spinp_neq (yarn_atomic_ptr* a, yarn_atomp_t oldptr) {
+inline void yarn_spinp_neq (yarn_atomic_ptr* a, void* oldptr) {
   yarn_mem_barrier();
-  while(a->ptr == oldptr);
+  while(a->ptr == (yarn_atomp_t)oldptr);
   yarn_mem_barrier();
 }
 
