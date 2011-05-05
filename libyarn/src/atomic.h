@@ -82,10 +82,14 @@ inline void yarn_writep(yarn_atomic_ptr* a, void* ptr) {
 
 //! Atomically writes the variable while making sure no memory ops can cross the call.
 inline void yarn_writev_barrier(yarn_atomic_var* a, yarn_atomv_t var) {
-  __sync_bool_compare_and_swap(&a->var, a->var, var);
+  yarn_mem_barrier(); //! \todo Should be Release semantic
+  a->var = var;
+  yarn_mem_barrier(); //! \todo Should be Acquire semantic
 }
 inline void yarn_writep_barrier(yarn_atomic_ptr* a, yarn_atomp_t ptr) {
-  __sync_bool_compare_and_swap(&a->ptr, a->ptr, ptr);
+  yarn_mem_barrier();
+  a->ptr = (yarn_atomp_t) ptr;
+  yarn_mem_barrier();
 }
 
 
