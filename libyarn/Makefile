@@ -57,8 +57,7 @@
 ##==========================================================================
 
 # The pre-processor and compiler options.
-MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
--D _POSIX_C_SOURCE=200809L
+MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic
 
 # The linker options.
 MY_LIBS   =
