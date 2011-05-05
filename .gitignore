@@ -6,3 +6,6 @@
 
 # Build outputs
 *.o
+*.exe
+*.d
+*.a
