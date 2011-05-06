@@ -107,7 +107,8 @@ size_t yarn_map_size (struct yarn_map* m) {
 
 void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
   assert (value != NULL);
-  
+  assert (addr != (uintptr_t)NULL);
+
   yarn_incv(&m->user_count);
   if (yarn_readv(&m->resize_state) != state_nothing) {
     yarn_decv(&m->user_count);

@@ -11,6 +11,7 @@ Tests for the concurrent hash map.
 #include <map.h>
 
 #include <stdint.h>
+#include <stdio.h>
 
 
 // Fixture.
@@ -83,10 +84,10 @@ START_TEST (t_map_basic_resize) {
   
   int value = 100;
 
-  for (size_t i = 0; i < 10000; ++i) {
+  for (size_t i = 1; i < 10000; ++i) {
     void* r = yarn_map_probe(f_map, i, (void*)&value);
     fail_unless (r == &value);
-    fail_unless (yarn_map_size(f_map) == i+1, "Wrong map size aftr %d iterations.", i+1);
+    fail_unless (yarn_map_size(f_map) == i, "Wrong map size aftr %d iterations.", i);
   }
 }
 END_TEST
