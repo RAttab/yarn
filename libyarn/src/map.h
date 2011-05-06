@@ -33,6 +33,8 @@ provided value.
 */
 void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value);
 
+//! Returns the number of items in the map.
+size_t yarn_map_size (struct yarn_map* m);
 
 
 #endif // YARN_MAP_H_
