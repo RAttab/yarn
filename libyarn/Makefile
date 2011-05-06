@@ -16,6 +16,9 @@
 # ability to build an archive for the object files and probably will
 # be adding testing support.
 #
+# TODO: Shouldn't build test as if it was the main executable. Bad joojoo.
+#	Tests get added to the main lib among other bad things.
+#
 #===========================================================================
 
 ## Customizable Section: adapt those variables to suit your program.
@@ -27,7 +30,7 @@ MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
             -Isrc -Iinclude
 
 # The linker options.
-MY_LIBS   = libyarn.a
+MY_LIBS   = libyarn.a libcheck.a
 
 # The pre-processor options used by the cpp (man cpp for more).
 CPPFLAGS  = -Wall
@@ -41,7 +44,7 @@ SRCDIRS   = src test
 
 # The executable file name.
 # If not specified, current directory name or `a.out' will be used.
-PROGRAM   = t_libyarn
+PROGRAM   = check_libyarn
 
 LIBRARY   = libyarn.a
 
@@ -61,7 +64,7 @@ CFLAGS  = -g -O2
 CXXFLAGS= -g -O2
 
 # The C program compiler.
-#CC     = gcc
+CC     = gcc
 
 # The C++ program compiler.
 #CXX    = g++
@@ -197,10 +200,10 @@ ctags: $(HEADERS) $(SOURCES)
 #-------------------------------------
 $(PROGRAM):$(OBJS)
 ifeq ($(SRC_CXX),)              # C program
-	$(LINK.c)   $(OBJS) $(MY_LIBS) -o $@
+	$(LINK.c) $(MY_LIBS) -o $@
 	@echo Type ./$@ to execute the program.
 else                            # C++ program
-	$(LINK.cxx) $(OBJS) $(MY_LIBS) -o $@
+	$(LINK.cxx) $(MY_LIBS) -o $@
 	@echo Type ./$@ to execute the program.
 endif
 
