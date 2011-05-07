@@ -26,7 +26,7 @@
 
 # The pre-processor and compiler options.
 MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
-            -D _POSIX_C_SOURCE=200112L \
+            -D _GNU_SOURCE=1 -pthread \
             -Isrc -Iinclude
 
 # The linker options.

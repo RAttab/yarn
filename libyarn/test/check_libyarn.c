@@ -11,10 +11,15 @@ Test launcher for libyarn.a
 #include <check.h>
 #include <stdlib.h>
 
+#include <unistd.h>
+#include <stdio.h>
+
 
 int run_suite (Suite* s) {
   SRunner* sr = srunner_create(s);
-  srunner_run_all(sr, CK_NORMAL);
+  //srunner_set_fork_status(s, CK_FORK | CK_NOFORK);
+
+  srunner_run_all(sr, CK_VERBOSE);
   
   int fail_count = srunner_ntests_failed(sr);
   srunner_free(sr);
