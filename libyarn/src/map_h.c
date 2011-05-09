@@ -15,6 +15,7 @@ Implements linear probing and
 #include <stddef.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <stdio.h>
 
 
 //! Default capacity of the hash table.
@@ -177,14 +178,14 @@ static void transfer_item (struct yarn_map* m, size_t pos) {
     return;
   }
 
-  const size_t h = hash((uintptr_t)addr, m->new_capacity);
-  size_t i = h;
+  const size_t new_pos = hash((uintptr_t)addr, m->new_capacity);
+  size_t i = new_pos;
   size_t n = 0;
   
   while (n < m->new_capacity) {
-    if (yarn_casp_fast(&m->new_table[pos].addr, NULL, addr) == NULL) {
+    if (yarn_casp_fast(&m->new_table[i].addr, NULL, addr) == NULL) {
       void* probe_value = yarn_readp(&m->table[pos].value);
-      yarn_writep(&m->new_table[pos].value, probe_value);
+      yarn_writep(&m->new_table[i].value, probe_value);
       break;
     }
     
@@ -323,4 +324,22 @@ static inline size_t hash(uintptr_t h, size_t capacity) {
   return (size_t) (h % capacity);
 }
 
+
+void yarn_map_dbg_dump (struct yarn_map* m) {
+  size_t size = yarn_readv(&m->size);
+  fprintf(stderr, "size = %zu\ncapacity = %zu\n", size, m->capacity);
+
+  for (size_t i = 0; i < m->capacity; ++i) {
+    fprintf(stderr, "[%zu] = ", i);
+    
+    void* addr = yarn_readp(&m->table[i].addr);
+    void* value = yarn_readp(&m->table[i].value);
+
+    if (addr == NULL)
+      fprintf(stderr, "NULL");
+    else 
+      fprintf(stderr, "{%p, %p}", addr, value);
+    fprintf(stderr, "\n");
+  }
+}
 

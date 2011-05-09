@@ -26,6 +26,7 @@
 
 # The pre-processor and compiler options.
 MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
+            -L/usr/local/lib/ \
             -D _GNU_SOURCE=1 -pthread \
             -Isrc -Iinclude
 
@@ -33,7 +34,7 @@ MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
 MY_LIBS   = libyarn.a libcheck.a
 
 # The pre-processor options used by the cpp (man cpp for more).
-CPPFLAGS  = -Wall
+CPPFLAGS  = 
 
 # The options used in linking as well as in any direct use of ld.
 LDFLAGS   =

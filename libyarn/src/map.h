@@ -36,5 +36,12 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value);
 //! Returns the number of items in the map.
 size_t yarn_map_size (struct yarn_map* m);
 
+/*!
+Dumps the current state of the hash table (DEBUG ONLY).
+\warning This is not thread safe. Use only as a debugging helper.
+*/
+void yarn_map_dbg_dump (struct yarn_map* m);
+
+
 
 #endif // YARN_MAP_H_
