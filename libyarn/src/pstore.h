@@ -12,7 +12,7 @@ Fast thread local storage.
 #define YARN_PSTORE_H_
 
 
-#include <threads.h>
+#include <tpool.h>
 
 #include <assert.h>
 #include <stdbool.h>
@@ -24,7 +24,7 @@ struct yarn_pstore {
 };
 
 
-struct yarn_pstore* yarn_pstore_init();
+struct yarn_pstore* yarn_pstore_init(void);
 void yarn_pstore_destroy(struct yarn_pstore* s);
 
 

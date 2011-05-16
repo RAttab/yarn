@@ -7,7 +7,7 @@
 
 #include <dependency.h>
 
-#include <threads.h>
+#include <tpool.h>
 #include "atomic.h"
 #include "map.h"
 #include "timestamp.h"
@@ -107,15 +107,12 @@ bool yarn_dep_global_init (size_t ws_size) {
   return false;
 }
 
-void yarn_dep_global_destroy () {
+void yarn_dep_global_destroy (void) {
   yarn_map_destroy(g_dependency_map);
   yarn_pmem_destroy(g_addr_dep_alloc);
   yarn_pstore_destroy(g_epoch_store);
 }
 
-
-bool yarn_dep_thread_init ();
-void yarn_dep_thread_destroy ();
 
 
 bool yarn_dep_store (yarn_tsize_t pool_id, void* addr, size_t size) {

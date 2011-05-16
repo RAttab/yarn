@@ -8,14 +8,14 @@
 
 #include "pstore.h"
 
-#include <threads.h>
+#include <tpool.h>
 #include "alloc.h"
 
 #include <stdbool.h>
 #include <stdio.h>
 
 
-struct yarn_pstore* yarn_pstore_init() {
+struct yarn_pstore* yarn_pstore_init(void) {
   const yarn_tsize_t pool_size = yarn_tpool_size();
   
   struct yarn_pstore* s = (struct yarn_pstore*)

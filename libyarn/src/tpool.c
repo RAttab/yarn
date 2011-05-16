@@ -7,7 +7,7 @@ Implementation details of threads.h
 \todo pthread error checking.
  */
 
-#include <threads.h>
+#include <tpool.h>
 
 #include "alloc.h"
 
@@ -45,18 +45,18 @@ static pthread_barrier_t g_pool_task_barrier;
 static inline void* worker_launcher (void* param);
 
 
-static inline yarn_tsize_t get_processor_count() {
+static inline yarn_tsize_t get_processor_count(void) {
   return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
 
 
-yarn_tsize_t yarn_tpool_size () {
+yarn_tsize_t yarn_tpool_size (void) {
   return g_pool_size;
 }
 
 
-bool yarn_tpool_init () {
+bool yarn_tpool_init (void) {
   if (g_pool != NULL) {
     return true;
   }
@@ -109,7 +109,7 @@ bool yarn_tpool_init () {
 }
 
 
-void yarn_tpool_destroy () {
+void yarn_tpool_destroy (void) {
   if (g_pool == NULL) {
     return;
   }

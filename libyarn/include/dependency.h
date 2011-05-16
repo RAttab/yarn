@@ -12,7 +12,7 @@ very difficult to track these types of things.
 #define YARN_DEPENDENCY_H_
 
 
-#include "threads.h"
+#include "tpool.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -23,7 +23,7 @@ bool yarn_dep_thread_init (yarn_tsize_t pool_id);
 void yarn_dep_thread_destroy (yarn_tsize_t pool_id);
 
 bool yarn_dep_global_init (size_t ws_size);
-void yarn_dep_global_destroy ();
+void yarn_dep_global_destroy (void);
 
 bool yarn_dep_store (yarn_tsize_t pool_id, void* addr, size_t size);
 
