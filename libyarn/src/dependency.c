@@ -73,7 +73,7 @@ bool yarn_dep_global_init (size_t ws_size) {
   g_dependency_map = yarn_map_init(ws_size);
 
   g_addr_dep_cache_size = yarn_tpool_size();
-  g_addr_dep_cache = yarn_malloc (addr_dep_size() * g_addr_dep_cache_size);
+  g_addr_dep_cache = yarn_malloc (sizeof(struct addr_dep*) * g_addr_dep_cache_size);
   for (int i = 0; i < g_addr_dep_cache_size; ++i) {
     g_addr_dep_cache[i] = NULL;
   }
