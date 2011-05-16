@@ -13,6 +13,7 @@ Test launcher for libyarn.a
 
 #include <unistd.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 
 int run_suite (Suite* s) {
@@ -33,7 +34,11 @@ int main (int argc, char** argv) {
   ((void) argc);
   ((void) argv);
 
-  if (run_suite(yarn_map_suite()) > 0) return EXIT_FAILURE;
+  bool err = false;
+
+  err |= run_suite(yarn_map_suite()) > 0;
+  err |= run_suite(yarn_pstore_suite()) > 0;
   
-  return EXIT_SUCCESS;
+  
+  return err ? EXIT_FAILURE : EXIT_SUCCESS;
 }

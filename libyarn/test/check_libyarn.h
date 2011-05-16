@@ -11,6 +11,9 @@ Suite declariation for the libyarn tests.
 
 #include <check.h>
 
+Suite* yarn_tpool_suite();
+Suite* yarn_pstore_suite();
+Suite* yarn_pmem_suite();
 
 Suite* yarn_map_suite();
 
