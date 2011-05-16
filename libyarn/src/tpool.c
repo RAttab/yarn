@@ -9,6 +9,7 @@ Implementation details of threads.h
 
 #include <tpool.h>
 
+#include "helper.h"
 #include "alloc.h"
 
 #include <assert.h>
@@ -85,7 +86,8 @@ bool yarn_tpool_init (void) {
     CPU_ZERO(&cpuset);
     //! \todo Might want to stagger the affinities to account for Hyperthreading.
     CPU_SET(pool_id, &cpuset);    
-    pthread_setaffinity_np(g_pool[pool_id].thread, sizeof(cpu_set_t), &cpuset);
+    YARN_CHECK_RET0(pthread_setaffinity_np(
+        g_pool[pool_id].thread, sizeof(cpu_set_t), &cpuset));
   }
   
   return true;
@@ -153,18 +155,18 @@ bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
   err = pthread_barrier_init(&g_pool_task_barrier, NULL, g_pool_size);
   if (err) goto barrier_error;
 
-  pthread_cond_signal(&g_pool_task_cond);
+  YARN_CHECK_RET0(pthread_cond_signal(&g_pool_task_cond));
 
   // Wait for the worker threads to indicate that they're done and clean up.
   bool task_error = false;
   {
-    pthread_mutex_lock(&g_pool_task_lock);
+    YARN_CHECK_RET0(pthread_mutex_lock(&g_pool_task_lock));
     while (g_pool_task != NULL) {
-      pthread_cond_wait(&g_pool_task_cond, &g_pool_task_lock);
+      YARN_CHECK_RET0(pthread_cond_wait(&g_pool_task_cond, &g_pool_task_lock));
     }
     yarn_free(ptask);
     task_error = g_pool_task_error;
-    pthread_mutex_unlock(&g_pool_task_lock);
+    YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
   }
 
   return !task_error;
@@ -187,24 +189,24 @@ static inline void* worker_launcher (void* param) {
     struct pool_task* task = NULL;
 
     {
-      pthread_mutex_lock(&g_pool_task_lock);
+      YARN_CHECK_RET0(pthread_mutex_lock(&g_pool_task_lock));
       while (g_pool_task == NULL) {
-	pthread_cond_wait(&g_pool_task_cond, &g_pool_task_lock);
+	YARN_CHECK_RET0(pthread_cond_wait(&g_pool_task_cond, &g_pool_task_lock));
       }
       task = g_pool_task;
-      pthread_mutex_unlock(&g_pool_task_lock);
+      YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
     }
 
     bool ret = (*task->worker_fun)(pool_id, task->data);
-    pthread_barrier_wait(&g_pool_task_barrier);
+    YARN_CHECK_RET0(pthread_barrier_wait(&g_pool_task_barrier));
 
     if(pool_id == 0) {
       g_pool_task_error = !ret;
       g_pool_task = NULL;
-      pthread_cond_signal(&g_pool_task_cond);
+      YARN_CHECK_RET0(pthread_cond_signal(&g_pool_task_cond));
     }
 
-    pthread_testcancel();
+    YARN_CHECK_RET0(pthread_testcancel());
   }
 
 
