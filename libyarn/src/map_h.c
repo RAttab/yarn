@@ -58,25 +58,30 @@ struct yarn_map {
 
 
 static inline size_t hash(uintptr_t h, size_t capacity);
-static void init_table (struct map_node** table, size_t capacity);
+static bool init_table (struct map_node** table, size_t capacity);
 static void resize_master (struct yarn_map* m);
 static void resize_helper (struct yarn_map* m);
 
 
 
-static void init_table (struct map_node** table, size_t capacity) {
+static bool init_table (struct map_node** table, size_t capacity) {
   size_t table_size = capacity * sizeof(struct map_node);
 
   *table = yarn_malloc(table_size);
+  if (!*table) return false;
+
   for(size_t i = 0; i < capacity; ++i) {
     yarn_writep(&(*table)[i].addr, NULL);
     yarn_writep(&(*table)[i].value, NULL);
   }
+
+  return true;
 }
 
 
 struct yarn_map* yarn_map_init (size_t capacity) {
   struct yarn_map* map = yarn_malloc(sizeof(struct yarn_map));
+  if (!map) goto alloc_error;
   
   map->capacity = YARN_MAP_DEFAULT_CAPACITY;
   size_t load_factor = (float)capacity / YARN_MAP_LOAD_FACTOR;
@@ -84,18 +89,25 @@ struct yarn_map* yarn_map_init (size_t capacity) {
     map->capacity <<= 1;
 
   yarn_writev(&map->size, 0);
-  init_table(&map->table, map->capacity);
+  bool ret = init_table(&map->table, map->capacity);
+  if (!ret) goto table_init_error;
 
   yarn_writev(&map->user_count, 0);
   yarn_writev(&map->helper_count, 0);
   yarn_writev(&map->resize_state, 0);
 
   return map;
+
+ table_init_error:
+  yarn_free(map);
+ alloc_error:
+  perror(__FUNCTION__);
+  return NULL;
 }
 
 
 //! \todo Make sure we get something to clean up the values. Probably a fct ptr.
-void yarn_map_free (struct yarn_map* m) {
+void yarn_map_destroy (struct yarn_map* m) {
   yarn_free(m->table);
   yarn_free(m);
 }
@@ -188,7 +200,8 @@ static void transfer_item (struct yarn_map* m, size_t pos) {
       yarn_writep(&m->new_table[i].value, probe_value);
       break;
     }
-    
+
+    // i = (i+1) & (m->new_capacity-1); // Faster version.
     i = (i+1) % m->new_capacity;
     n++;
   }
@@ -223,7 +236,8 @@ static void resize_master (struct yarn_map* m) {
 
   // Init the new table.
   m->new_capacity = m->capacity *2;
-  init_table(&m->new_table, m->new_capacity);
+  bool ret = init_table(&m->new_table, m->new_capacity);
+  assert(ret); //! \todo Hard to recover from a malloc error during a resize.
   
   // let regular users drain out.
   yarn_spinv_eq(&m->user_count, 1);

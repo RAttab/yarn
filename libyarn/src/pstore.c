@@ -20,11 +20,7 @@ struct yarn_pstore* yarn_pstore_init() {
   
   struct yarn_pstore* s = (struct yarn_pstore*)
     yarn_malloc(sizeof(struct yarn_pstore) + sizeof(void*) * pool_size);
-  
-  if (s == NULL) {
-    perror(__FUNCTION__);
-    return NULL;
-  }
+  if (!s) goto alloc_error;
 
   s->size = pool_size;
   for (yarn_tsize_t pool_id = 0; pool_id != pool_size; ++pool_id) {
@@ -32,6 +28,10 @@ struct yarn_pstore* yarn_pstore_init() {
   }
 
   return s;
+
+ alloc_error:
+  perror(__FUNCTION__);
+  return NULL;
 }
 
 void yarn_pstore_destroy(struct yarn_pstore* s) {

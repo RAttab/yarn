@@ -23,18 +23,17 @@ the thread id provided by pthread because it's in the range 0 to yarn_tpool_size
 
 \param void* the task information passed to yarn_tpool_exec.
 
-\return TBD.
+\return false if an error occured and yarn_tpool_exec should stop.
 
  */
-typedef void (*yarn_worker_t) (yarn_tsize_t, void*);
+typedef bool (*yarn_worker_t) (yarn_tsize_t, void*);
 
 
-void yarn_tpool_init ();
-void yarn_tpool_cleanup();
+bool yarn_tpool_init ();
+void yarn_tpool_destroy();
 
-//! Executes the tasks and returns when everyone is done or yarn_tpool_interrupt is called.
-void yarn_tpool_exec (yarn_worker_t worker, void* task);
-void yarn_tpool_interrupt ();
+//! Executes the tasks and returns when everyone is done is called.
+bool yarn_tpool_exec (yarn_worker_t worker, void* task);
 
 yarn_tsize_t yarn_tpool_size ();
 bool yarn_tpool_is_done();

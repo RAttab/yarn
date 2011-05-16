@@ -25,7 +25,7 @@ struct yarn_map;
 struct yarn_map* yarn_map_init (size_t capacity);
 
 //! Frees a map object.
-void yarn_map_free (struct yarn_map* m); 
+void yarn_map_destroy (struct yarn_map* m); 
 
 /*!
 Looks for the given address and returns the value if present. Otherwise it adds the 

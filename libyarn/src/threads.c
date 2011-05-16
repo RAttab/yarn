@@ -35,6 +35,7 @@ struct pool_task {
 };
 
 static struct pool_task* volatile g_pool_task = NULL;
+static volatile bool g_pool_task_error = false;
 static pthread_mutex_t g_pool_task_lock;
 static pthread_cond_t g_pool_task_cond;
 static pthread_barrier_t g_pool_task_barrier;
@@ -55,96 +56,124 @@ yarn_tsize_t yarn_tpool_size () {
 }
 
 
-
-void yarn_tpool_init () {
+bool yarn_tpool_init () {
   if (g_pool != NULL) {
-    return;
+    return true;
   }
 
-  pthread_cond_init(&g_pool_task_cond, NULL);
-  pthread_mutex_init(&g_pool_task_lock, NULL);
+  int err = 0;
+
+  err = pthread_cond_init(&g_pool_task_cond, NULL);
+  if (err) goto cond_error;
+
+  err = pthread_mutex_init(&g_pool_task_lock, NULL);
+  if (err) goto mutex_error;
 
   g_pool_size = get_processor_count();
-  g_pool = (struct pool_thread*) yarn_malloc(sizeof(struct pool_thread) * g_pool_size);
-  
-  for (yarn_tsize_t pool_id = 0; pool_id < g_pool_size; ++pool_id) {
-    
-    int ret = pthread_create(
-        &g_pool[pool_id].thread, NULL, worker_launcher, (void*) pool_id);
 
-    if (ret != 0) {
-      perror("yarn_tpool_init.pthread_create");
-      assert(false); //! \todo Need better error handling.
-    }
+  g_pool = (struct pool_thread*) yarn_malloc(sizeof(struct pool_thread) * g_pool_size);
+  if (g_pool == NULL) goto pool_alloc_error;
+
+  yarn_tsize_t pool_id = 0;
+  for (; pool_id < g_pool_size; ++pool_id) {
+    
+    err = pthread_create(
+        &g_pool[pool_id].thread, NULL, worker_launcher, (void*) pool_id);
+    if (err) goto thread_create_error;
     
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     //! \todo Might want to stagger the affinities to account for Hyperthreading.
     CPU_SET(pool_id, &cpuset);    
     pthread_setaffinity_np(g_pool[pool_id].thread, sizeof(cpu_set_t), &cpuset);
-			   
   }
+  
+  return true;
 
-}
+  // Cleanup in case of error.
 
-void yarn_tpool_cleanup () {
-  if (g_pool == NULL) {
-    return;
+ thread_create_error:
+  for (yarn_tsize_t i = 0; i < pool_id; ++i) {
+    pthread_cancel(g_pool[i].thread);
+    pthread_detach(g_pool[i].thread);
   }
-
-  yarn_tpool_interrupt();
-
-  for (yarn_tsize_t pool_id = 0; pool_id < g_pool_size; ++pool_id) {
-    pthread_join(g_pool[pool_id].thread, NULL);
-  }
-
-  pthread_cond_destroy(&g_pool_task_cond);
-  pthread_mutex_destroy(&g_pool_task_lock);
-  pthread_barrier_destroy(&g_pool_task_barrier);
 
   yarn_free(g_pool);
-  g_pool = NULL;
-  g_pool_size = 0;
+ pool_alloc_error:
+  pthread_mutex_destroy(&g_pool_task_lock);
+ mutex_error:
+  pthread_cond_destroy(&g_pool_task_cond);
+ cond_error:
+  perror(__FUNCTION__);
+  return false;
 }
 
 
-void yarn_tpool_interrupt () {
+void yarn_tpool_destroy () {
   if (g_pool == NULL) {
     return;
   }
 
   for (yarn_tsize_t pool_id = 0; pool_id < g_pool_size; ++pool_id) {
     pthread_cancel(g_pool[pool_id].thread);
+    pthread_join(g_pool[pool_id].thread, NULL);
   }
+
+  pthread_cond_destroy(&g_pool_task_cond);
+  pthread_mutex_destroy(&g_pool_task_lock);
+
+  //! \todo May not have been initialized and destroying it could cause problems.
+  pthread_barrier_destroy(&g_pool_task_barrier);
+
+  yarn_free(g_pool);
+
+  g_pool = NULL;
+  g_pool_size = 0;
 }
-
-
 
 
 static inline void* worker_launcher (void* param);
 
 
 //! Executes the tasks and returns when everyone is done or yarn_tpool_interrupt is called.
-void yarn_tpool_exec (yarn_worker_t worker, void* task) {
+bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
+
+  int err = 0;
   
   struct pool_task* ptask = (struct pool_task*)yarn_malloc(sizeof(struct pool_task*));
+  if (ptask == NULL) goto task_alloc_error;
+
   ptask->data = task;
   ptask->worker_fun = worker;
 
   // Posts the task and notify the worker threads.
+  g_pool_task_error = false;
   g_pool_task = ptask;
-  pthread_barrier_init(&g_pool_task_barrier, NULL, g_pool_size);
+
+  err = pthread_barrier_init(&g_pool_task_barrier, NULL, g_pool_size);
+  if (err) goto barrier_error;
+
   pthread_cond_signal(&g_pool_task_cond);
 
   // Wait for the worker threads to indicate that they're done and clean up.
+  bool task_error = false;
   {
     pthread_mutex_lock(&g_pool_task_lock);
     while (g_pool_task != NULL) {
       pthread_cond_wait(&g_pool_task_cond, &g_pool_task_lock);
     }
     yarn_free(ptask);
+    task_error = g_pool_task_error;
     pthread_mutex_unlock(&g_pool_task_lock);
   }
+
+  return !task_error;
+
+ barrier_error:
+  yarn_free(ptask);
+ task_alloc_error:
+  perror(__FUNCTION__);
+  return false;
 
 }
 
@@ -166,10 +195,11 @@ static inline void* worker_launcher (void* param) {
       pthread_mutex_unlock(&g_pool_task_lock);
     }
 
-    (*task->worker_fun)(pool_id, task->data);
+    bool ret = (*task->worker_fun)(pool_id, task->data);
     pthread_barrier_wait(&g_pool_task_barrier);
 
     if(pool_id == 0) {
+      g_pool_task_error = !ret;
       g_pool_task = NULL;
       pthread_cond_signal(&g_pool_task_cond);
     }

@@ -26,7 +26,7 @@ static void t_map_basic_setup (void) {
 }
 
 static void t_map_basic_teardown (void) {
-  yarn_map_free(f_map);
+  yarn_map_destroy(f_map);
   f_map = NULL;
 }
 
