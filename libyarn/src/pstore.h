@@ -33,12 +33,12 @@ inline yarn_tsize_t yarn_pstore_size(struct yarn_pstore* s) {
 }
 
 inline void* yarn_pstore_load(struct yarn_pstore* s, yarn_tsize_t pool_id) {
-  assert(pool_id >= s->size);
+  assert(pool_id < s->size);
   return s->data[pool_id];
 }
 
 inline void yarn_pstore_store(struct yarn_pstore* s, yarn_tsize_t pool_id, void* data) {
-  assert(pool_id >= s->size);
+  assert(pool_id < s->size);
   s->data[pool_id] = data;
 }
 
