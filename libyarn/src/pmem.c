@@ -50,30 +50,37 @@ yarn_pmem_init(size_t size, yarn_pmem_construct cons_fun, yarn_pmem_destruct des
 void yarn_pmem_destroy(struct yarn_pmem* m) {
   for (yarn_tsize_t pool_id = 0; pool_id < yarn_pstore_size(m->cache); ++pool_id) {
     void* data = yarn_pstore_load(m->cache, pool_id);
+    if (data == NULL) {
+      continue;
+    }
+
     if (m->destruct_fun) {
       (*m->destruct_fun)(data);
     }
+
     yarn_free(data);
   }
   
   if(!m->cache) {
     yarn_pstore_destroy(m->cache);
   }
+
   yarn_free(m);
 }
 
 
 void* yarn_pmem_alloc(struct yarn_pmem* m, yarn_tsize_t pool_id) {
+
   void* data = yarn_pstore_load(m->cache, pool_id);
 
-  if (data == NULL) {
+  if (data == NULL) {    
     data = yarn_malloc(m->size);
     if (!data) goto alloc_error;
 
-    if (m->construct_fun) {
-      (*m->construct_fun)(data);
+    if (m->construct_fun && !(*m->construct_fun)(data)) {
+      yarn_free(data);
+      return NULL;
     }
-    yarn_pstore_store(m->cache, pool_id, data);
   }
   else {
     yarn_pstore_store(m->cache, pool_id, NULL);
