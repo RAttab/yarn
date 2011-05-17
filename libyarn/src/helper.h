@@ -10,6 +10,7 @@ Several helper macros, constants and whatever else I consider helperful.
 #define YARN_HELPER_H_
 
 #include <stdbool.h>
+#include <assert.h>
 
 #define YARN_CHECK_ERR()  \
   while(0) {		  \
@@ -18,14 +19,18 @@ Several helper macros, constants and whatever else I consider helperful.
   } ((void)0)
 
 
-#ifdef _NDEBUG
+#ifndef NDEBUG
+
 #define YARN_CHECK_RET0(expr) \
   while(0) { if((expr) == 0) { YARN_CHECK_ERR(); } } ((void)0)
 #define YARN_CHECK_RETN0(expr) \
   while(0) { if((expr) != 0) { YARN_CHECK_ERR(); } } ((void)0)
+
 #else
+
 #define YARN_CHECK_RET0(expr) while(0) { (expr); } ((void)0)
 #define YARN_CHECK_RETN0(expr) while(0) { (expr); } ((void)0)
+
 #endif
 
 

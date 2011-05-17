@@ -180,7 +180,7 @@ static void* t_map_para_distinct_add_worker (void* param) {
 
   for (uintptr_t addr = addr_start; addr < addr_end; ++addr) {
     void* ret = yarn_map_probe(f_map, addr, (void*)&val);
-    fail_unless(ret == &val, "ret=%p, &val=%p", ret, &val);
+    fail_unless(ret == &val, "it=%zu, ret=%p, &val=%p", addr, ret, &val);
   }
 
   return NULL;

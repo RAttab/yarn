@@ -36,8 +36,11 @@ int main (int argc, char** argv) {
 
   bool err = false;
 
-  err |= run_suite(yarn_map_suite()) > 0;
+  //  err |= run_suite(yarn_map_suite()) > 0;
+
+  err |= run_suite(yarn_tpool_suite()) > 0;
   err |= run_suite(yarn_pstore_suite()) > 0;
+  err |= run_suite(yarn_pmem_suite()) > 0;
   
   
   return err ? EXIT_FAILURE : EXIT_SUCCESS;
