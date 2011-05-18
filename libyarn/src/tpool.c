@@ -43,7 +43,6 @@ static pthread_cond_t g_pool_task_cond;
 static pthread_barrier_t g_pool_task_barrier;
 
 
-
 static inline void* worker_launcher (void* param);
 
 
@@ -158,7 +157,7 @@ bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
     // Posts the task and notify the worker threads.
     yarn_writev(&g_pool_task_error, false);
     yarn_writep(&g_pool_task, ptask);
-    YARN_CHECK_RET0(pthread_cond_signal(&g_pool_task_cond));
+    YARN_CHECK_RET0(pthread_cond_broadcast(&g_pool_task_cond));
 
     YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
   }
@@ -214,10 +213,9 @@ static inline void* worker_launcher (void* param) {
       YARN_CHECK_ERR();
     }
 
-
     if(pool_id == 0) {
       yarn_writep(&g_pool_task, NULL);
-      YARN_CHECK_RET0(pthread_cond_signal(&g_pool_task_cond));
+      YARN_CHECK_RET0(pthread_cond_broadcast(&g_pool_task_cond));
     }
 
     ret = pthread_barrier_wait(&g_pool_task_barrier);

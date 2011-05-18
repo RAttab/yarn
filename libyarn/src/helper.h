@@ -13,23 +13,23 @@ Several helper macros, constants and whatever else I consider helperful.
 #include <assert.h>
 
 #define YARN_CHECK_ERR()  \
-  while(0) {		  \
+  do {		  \
     perror(__FUNCTION__); \
     assert(false);	  \
-  } ((void)0)
+  } while(0)
 
 
 #ifndef NDEBUG
 
 #define YARN_CHECK_RET0(expr) \
-  while(0) { if((expr) == 0) { YARN_CHECK_ERR(); } } ((void)0)
+  do { if((expr) != 0) { YARN_CHECK_ERR(); } } while(0)
 #define YARN_CHECK_RETN0(expr) \
-  while(0) { if((expr) != 0) { YARN_CHECK_ERR(); } } ((void)0)
+  do { if((expr) == 0) { YARN_CHECK_ERR(); } } while(0)
 
 #else
 
-#define YARN_CHECK_RET0(expr) while(0) { (expr); } ((void)0)
-#define YARN_CHECK_RETN0(expr) while(0) { (expr); } ((void)0)
+#define YARN_CHECK_RET0(expr) do { (expr); } while(0)
+#define YARN_CHECK_RETN0(expr) do { (expr); } while(0)
 
 #endif
 
