@@ -128,7 +128,7 @@ void* yarn_map_probe (struct yarn_map* m, uintptr_t addr, void* value) {
     resize_helper(m);
     yarn_incv(&m->user_count);
   }
-  
+
   const size_t h = hash(addr, m->capacity);
   void* return_val = NULL;
   size_t i = h;
@@ -285,15 +285,16 @@ static void resize_helper (struct yarn_map* m) {
   // start transfering items.
   while (yarn_readv(&m->resize_state) == state_resizing) {
     size_t min_pos = yarn_readv(&m->resize_pos) + YARN_MAP_HELPER_TRESHOLD;
-    size_t range = m->capacity - min_pos;
 
-    if (range > YARN_MAP_HELPER_TRESHOLD) {
+    if (min_pos + YARN_MAP_HELPER_TRESHOLD < m->capacity) {
+      size_t range = m->capacity - min_pos;
       size_t pos = ((float)rand() / RAND_MAX) * range + min_pos;
       transfer_item(m, pos);
     }
     // Not enough items left to make it worth it to continue.
-    else 
+    else {
       break;
+    }
   }
 
   // Wait for master to complete transfering items.
