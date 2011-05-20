@@ -7,7 +7,7 @@ Implementation details of threads.h
 \todo pthread error checking.
  */
 
-#include <tpool.h>
+#include "tpool.h"
 
 #include "helper.h"
 #include "atomic.h"
