@@ -7,15 +7,14 @@
 Implements linear probing and 
  */
 
+#include <types.h>
 #include "map.h"
 #include "atomic.h"
-#include "alloc.h"
 
 #include <math.h>
-#include <stddef.h>
-#include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 
 //! Default capacity of the hash table.
@@ -67,7 +66,7 @@ static void resize_helper (struct yarn_map* m);
 static bool init_table (struct map_node** table, size_t capacity) {
   size_t table_size = capacity * sizeof(struct map_node);
 
-  *table = yarn_malloc(table_size);
+  *table = malloc(table_size);
   if (!*table) return false;
 
   for(size_t i = 0; i < capacity; ++i) {
@@ -80,7 +79,7 @@ static bool init_table (struct map_node** table, size_t capacity) {
 
 
 struct yarn_map* yarn_map_init (size_t capacity) {
-  struct yarn_map* map = yarn_malloc(sizeof(struct yarn_map));
+  struct yarn_map* map = malloc(sizeof(struct yarn_map));
   if (!map) goto alloc_error;
   
   map->capacity = YARN_MAP_DEFAULT_CAPACITY;
@@ -99,7 +98,7 @@ struct yarn_map* yarn_map_init (size_t capacity) {
   return map;
 
  table_init_error:
-  yarn_free(map);
+  free(map);
  alloc_error:
   perror(__FUNCTION__);
   return NULL;
@@ -108,8 +107,8 @@ struct yarn_map* yarn_map_init (size_t capacity) {
 
 //! \todo Make sure we get something to clean up the values. Probably a fct ptr.
 void yarn_map_destroy (struct yarn_map* m) {
-  yarn_free(m->table);
-  yarn_free(m);
+  free(m->table);
+  free(m);
 }
 
 
@@ -254,7 +253,7 @@ static void resize_master (struct yarn_map* m) {
   yarn_spinv_eq(&m->helper_count, 0);
 
   // swap the tables and clean up.
-  yarn_free(m->table);
+  free(m->table);
   m->table = m->new_table;
   m->new_table = NULL;
   m->capacity = m->new_capacity;

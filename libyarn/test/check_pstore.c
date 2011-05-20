@@ -16,7 +16,7 @@
 
 // Fixture
 struct yarn_pstore* f_store;
-static yarn_tsize_t f_pool_size;
+static yarn_word_t f_pool_size;
 
 static void t_pstore_setup(void) {
   bool ret = yarn_tpool_init();
@@ -36,7 +36,7 @@ static void t_pstore_teardown(void) {
 
 
 START_TEST(t_pstore_seq_init) {
-  for (yarn_tsize_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
+  for (yarn_word_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
     
     void* val = yarn_pstore_load(f_store, pool_id);
     fail_if(val != NULL, "pool_id=%zu, val=%p, expected = %p", pool_id, val, NULL); 
@@ -47,15 +47,15 @@ END_TEST
 
 START_TEST(t_pstore_seq_load_store) {
 
-  for (yarn_tsize_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
+  for (yarn_word_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
     yarn_pstore_store(f_store, pool_id, (void*) pool_id);
 
-    yarn_tsize_t val = (yarn_tsize_t) yarn_pstore_load(f_store, pool_id);
+    yarn_word_t val = (yarn_word_t) yarn_pstore_load(f_store, pool_id);
     fail_if(val != pool_id, "pool_id=%zu, val=%zu, expected = %zu", pool_id, val, pool_id);
   }
 
-  for (yarn_tsize_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
-    yarn_tsize_t val = (yarn_tsize_t) yarn_pstore_load(f_store, pool_id);
+  for (yarn_word_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
+    yarn_word_t val = (yarn_word_t) yarn_pstore_load(f_store, pool_id);
     fail_if(val != pool_id, "pool_id=%zu, val=%zu, expected = %zu", pool_id, val, pool_id);
   }
 }
@@ -64,7 +64,7 @@ END_TEST
 
 
 
-bool t_pstore_worker (yarn_tsize_t pool_id, void* task) {
+bool t_pstore_worker (yarn_word_t pool_id, void* task) {
 
   (void) task;
 

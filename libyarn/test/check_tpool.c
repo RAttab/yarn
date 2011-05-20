@@ -7,12 +7,13 @@
 
 #include "check_libyarn.h"
 
+#include <types.h>
 #include <atomic.h>
 #include <tpool.h>
-#include <alloc.h>
 
 #include <stdio.h>
-#include <stdbool.h>
+#include <stdlib.h>
+
 
 
 
@@ -30,10 +31,10 @@ static void t_tpool_setup(void) {
   bool ret = yarn_tpool_init();
   fail_if (!ret);
 
-  const yarn_tsize_t thread_count = yarn_tpool_size();
+  const yarn_word_t thread_count = yarn_tpool_size();
   fail_if (thread_count <= 1, "Not enough CPUs detected (%d).", thread_count);
 
-  f_worker = yarn_malloc(sizeof(struct t_worker));
+  f_worker = malloc(sizeof(struct t_worker));
   yarn_writev(&f_worker->bad_count, 0);
   yarn_writev(&f_worker->good_count, 0);
   fail_if (!f_worker);
@@ -41,7 +42,7 @@ static void t_tpool_setup(void) {
 
 static void t_tpool_teardown(void) {
   yarn_tpool_destroy();
-  yarn_free(f_worker);
+  free(f_worker);
 }
 
 
@@ -55,7 +56,7 @@ END_TEST
 
 
 
-bool t_good_worker (yarn_tsize_t pool_id, void* task) {
+bool t_good_worker (yarn_word_t pool_id, void* task) {
   struct t_worker* w = (struct t_worker*) task;
 
   yarn_atomv_t old_count;
@@ -69,7 +70,7 @@ bool t_good_worker (yarn_tsize_t pool_id, void* task) {
   return true;
 }
 
-bool t_bad_worker (yarn_tsize_t pool_id, void* task) {
+bool t_bad_worker (yarn_word_t pool_id, void* task) {
   if (pool_id+1 != yarn_tpool_size() /2) {
     return t_good_worker(pool_id, task);
   }
@@ -92,8 +93,8 @@ bool t_bad_worker (yarn_tsize_t pool_id, void* task) {
 
 static void exec_tpool(yarn_worker_t worker, 
 		       bool expected_ret, 
-		       const yarn_tsize_t good_exp, 
-		       const yarn_tsize_t bad_exp,
+		       const yarn_word_t good_exp, 
+		       const yarn_word_t bad_exp,
 		       char* msg) 
 {
 
@@ -118,8 +119,8 @@ static void exec_tpool(yarn_worker_t worker,
 }
 
 START_TEST(t_tpool_exec_good) {
-  const yarn_tsize_t n = yarn_tpool_size();
-  const yarn_tsize_t r = (n*(n+1))/2;
+  const yarn_word_t n = yarn_tpool_size();
+  const yarn_word_t r = (n*(n+1))/2;
 
   exec_tpool(t_good_worker, true, r, 0, "exec_good");
 

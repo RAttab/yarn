@@ -15,18 +15,16 @@ enough times overflow and come back to it's original value then that call will f
 #define YARN_TIMESTAMP_H_
 
 
+#include <types.h>
 #include "atomic.h"
 
 
 //! Atomic timestamp type. Only manipulate through the yarn_ts_xxx functions.
 typedef yarn_atomic_var yarn_timestamp_t;
 
-//! Sampled value of a timestamp.
-typedef yarn_atomv_t yarn_ts_sample_t;
-
 
 // Sets the highest order bit which is used as a flag to detect overflows.
-#define YARN_TIMESTAMP_FLAG_MASK (1ULL << (sizeof(yarn_ts_sample_t)*8-1))
+#define YARN_TIMESTAMP_FLAG_MASK (1ULL << (sizeof(yarn_word_t)*8-1))
 
 
 //!
@@ -41,18 +39,18 @@ inline void yarn_ts_free (yarn_timestamp_t* ts) {
 
 
 //! Atomically reads the value of the timestamp. This is a memory barrier operation.
-inline yarn_ts_sample_t yarn_ts_sample (yarn_timestamp_t* ts) {
+inline yarn_word_t yarn_ts_sample (yarn_timestamp_t* ts) {
   return yarn_readv(ts);
 }
 
 
 //! Atomically increments the timestamp.
-inline void yarn_ts_inc (yarn_timestamp_t* ts) {
-  yarn_incv(ts);
+inline yarn_word_t yarn_ts_inc (yarn_timestamp_t* ts) {
+  return yarn_incv(ts);
 }
 
 //! Increments the timestamps if it's equal to old_val. All done atomicly.
-inline bool yarn_ts_inc_eq (yarn_timestamp_t* ts, yarn_ts_sample_t old_val) {
+inline bool yarn_ts_inc_eq (yarn_timestamp_t* ts, yarn_word_t old_val) {
   return yarn_casv(ts, old_val, old_val+1) == old_val;
 }
 
@@ -61,13 +59,13 @@ inline bool yarn_ts_inc_eq (yarn_timestamp_t* ts, yarn_ts_sample_t old_val) {
 Returns 0 if the timestamps are equal, a negative value if old_val is greater then new_val
 and a positive value if new_val is greater then old_val.
 */
-inline int yarn_ts_comp (yarn_ts_sample_t old_val, yarn_ts_sample_t new_val) {
+inline int yarn_ts_comp (yarn_word_t old_val, yarn_word_t new_val) {
   if (old_val == new_val) {
     return 0;
   }
 
-  const yarn_ts_sample_t old_mask = old_val & YARN_TIMESTAMP_FLAG_MASK;
-  const yarn_ts_sample_t new_mask = new_val & YARN_TIMESTAMP_FLAG_MASK;
+  const yarn_word_t old_mask = old_val & YARN_TIMESTAMP_FLAG_MASK;
+  const yarn_word_t new_mask = new_val & YARN_TIMESTAMP_FLAG_MASK;
 
   // This check only works in reasonable cases.
   if (old_mask == new_mask) {

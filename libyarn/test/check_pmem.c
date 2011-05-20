@@ -7,17 +7,17 @@
 
 #include "check_libyarn.h"
 
+#include <types.h>
 #include <pmem.h>
 #include <tpool.h>
 
 #include <stdio.h>
-#include <stdbool.h>
 
 
 // Fixture
 static struct yarn_pmem* f_good_mem;
 static struct yarn_pmem* f_bad_mem;
-static yarn_tsize_t f_pool_size;
+static yarn_word_t f_pool_size;
 
 
 struct t_struct {
@@ -71,7 +71,7 @@ static void t_pmem_teardown(void) {
 
 
 START_TEST(t_pmem_fail_construct) {
-  for (yarn_tsize_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
+  for (yarn_word_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
     struct t_struct* s = (struct t_struct*) yarn_pmem_alloc(f_bad_mem, pool_id);
     fail_if(s != NULL, "pool_id=%zu, val=%p, expected=%p", pool_id, s, NULL);
   }
@@ -80,7 +80,7 @@ END_TEST
 
 
 START_TEST(t_pmem_free_null) {
-  for (yarn_tsize_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
+  for (yarn_word_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
     yarn_pmem_free(f_bad_mem, pool_id, NULL);
   }
 }
@@ -88,7 +88,7 @@ END_TEST
 
 
 START_TEST(t_pmem_alloc) {
-  for (yarn_tsize_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
+  for (yarn_word_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
     struct t_struct* s = NULL;
 
     {
@@ -113,7 +113,7 @@ END_TEST
 
 
 START_TEST(t_pmem_force_free) {
-  for(yarn_tsize_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
+  for(yarn_word_t pool_id = 0; pool_id < f_pool_size; ++pool_id) {
     struct t_struct* first_s = NULL;
     struct t_struct* second_s = NULL;
 

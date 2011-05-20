@@ -10,15 +10,14 @@ Implementation details of threads.h
 #include <tpool.h>
 
 #include "helper.h"
-#include "alloc.h"
 #include "atomic.h"
 
 #include <assert.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include <sched.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 
 struct pool_thread {
@@ -28,7 +27,7 @@ struct pool_thread {
 
 //! The one and only thread pool.
 static struct pool_thread* g_pool = NULL;
-static yarn_tsize_t g_pool_size = 0;
+static yarn_word_t g_pool_size = 0;
 
 
 struct pool_task {
@@ -46,13 +45,13 @@ static pthread_barrier_t g_pool_task_barrier;
 static inline void* worker_launcher (void* param);
 
 
-static inline yarn_tsize_t get_processor_count(void) {
+static inline yarn_word_t get_processor_count(void) {
   return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
 
 
-yarn_tsize_t yarn_tpool_size (void) {
+yarn_word_t yarn_tpool_size (void) {
   return g_pool_size;
 }
 
@@ -75,10 +74,10 @@ bool yarn_tpool_init (void) {
   err = pthread_barrier_init(&g_pool_task_barrier, NULL, g_pool_size);
   if (err) goto barrier_error;
 
-  g_pool = (struct pool_thread*) yarn_malloc(sizeof(struct pool_thread) * g_pool_size);
+  g_pool = (struct pool_thread*) malloc(sizeof(struct pool_thread) * g_pool_size);
   if (g_pool == NULL) goto pool_alloc_error;
 
-  yarn_tsize_t pool_id = 0;
+  yarn_word_t pool_id = 0;
   for (; pool_id < g_pool_size; ++pool_id) {
 
     err = pthread_create(
@@ -98,12 +97,12 @@ bool yarn_tpool_init (void) {
   // Cleanup in case of error.
 
  thread_create_error:
-  for (yarn_tsize_t i = 0; i < pool_id; ++i) {
+  for (yarn_word_t i = 0; i < pool_id; ++i) {
     pthread_cancel(g_pool[i].thread);
     pthread_detach(g_pool[i].thread);
   }
 
-  yarn_free(g_pool);
+  free(g_pool);
  pool_alloc_error:
   pthread_barrier_destroy(&g_pool_task_barrier);
  barrier_error:
@@ -121,7 +120,7 @@ void yarn_tpool_destroy (void) {
     return;
   }
 
-  for (yarn_tsize_t pool_id = 0; pool_id < g_pool_size; ++pool_id) {
+  for (yarn_word_t pool_id = 0; pool_id < g_pool_size; ++pool_id) {
     pthread_detach(g_pool[pool_id].thread);
     pthread_cancel(g_pool[pool_id].thread);
   }
@@ -132,7 +131,7 @@ void yarn_tpool_destroy (void) {
   //! \todo May not have been initialized and destroying it could cause problems.
   pthread_barrier_destroy(&g_pool_task_barrier);
 
-  yarn_free(g_pool);
+  free(g_pool);
 
   g_pool = NULL;
   g_pool_size = 0;
@@ -145,7 +144,7 @@ static inline void* worker_launcher (void* param);
 //! Executes the tasks and returns when everyone is done or yarn_tpool_interrupt is called.
 bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
 
-  struct pool_task* ptask = (struct pool_task*)yarn_malloc(sizeof(struct pool_task*));
+  struct pool_task* ptask = (struct pool_task*)malloc(sizeof(struct pool_task*));
   if (ptask == NULL) goto task_alloc_error;
 
   ptask->data = task;
@@ -169,14 +168,14 @@ bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
     while (yarn_readp(&g_pool_task) != NULL) {
       YARN_CHECK_RET0(pthread_cond_wait(&g_pool_task_cond, &g_pool_task_lock));
     }
-    yarn_free(ptask);
+    free(ptask);
     task_error = yarn_readv(&g_pool_task_error);
     YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
   }
 
   return !task_error;
 
-  // yarn_free(ptask);
+  // free(ptask);
  task_alloc_error:
   perror(__FUNCTION__);
   return false;
@@ -186,7 +185,7 @@ bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
 
 
 static inline void* worker_launcher (void* param) {
-  const yarn_tsize_t pool_id = (yarn_tsize_t) param;
+  const yarn_word_t pool_id = (yarn_word_t) param;
 
   int ret = 0;
 

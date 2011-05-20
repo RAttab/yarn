@@ -16,8 +16,7 @@ ported to other compilers if we ever get there.
 #define YARN_ATOMIC_H_
 
 
-#include <stdint.h>
-#include <stdbool.h>
+#include <types.h>
 
 
 //! Defines a full memory barrier.
@@ -28,8 +27,8 @@ ported to other compilers if we ever get there.
 Type for atomic variables.
 The size will change depending on the platform but is guaranteed to be at least 32 bits.
  */
-typedef uint_fast32_t yarn_atomv_t;
-#define YARN_ATOMV_UNLIKELY UINT_FAST32_MAX
+typedef yarn_word_t yarn_atomv_t;
+#define YARN_ATOMV_UNLIKELY YARN_WORD_MAX
 
 /*!
 Type for atomic pointers.

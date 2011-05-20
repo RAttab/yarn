@@ -8,18 +8,17 @@
 #include <dependency.h>
 
 #include <tpool.h>
+#include <types.h>
 #include "atomic.h"
 #include "map.h"
 #include "timestamp.h"
-#include "alloc.h"
 #include "pmem.h"
 #include "pstore.h"
 
 #include <assert.h>
-#include <stdint.h>
-#include <stdbool.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 
 //! \todo gotta find something better then uint64_t
@@ -42,22 +41,7 @@ static struct yarn_pmem* g_addr_dep_alloc;
 //! \todo Probably won't only hold epochs.
 static struct yarn_pstore* g_epoch_store;
 
-// ---------------------------------------------------------------------------------------
-// Placeholders.
 
-static inline yarn_ts_sample_t get_epoch () {
-  //! \todo Return whatever is stored in the thread local.
-  return 0;
-}
-
-static inline void set_epoch (yarn_ts_sample_t epoch) {
-  //! \todo Update the thread local.
-  (void) epoch;
-}
-
-
-//
-// ---------------------------------------------------------------------------------------
 
 static inline size_t addr_dep_size() {
   return sizeof(struct addr_dep*) + sizeof(wbuf_t) * yarn_tpool_size();
@@ -115,7 +99,30 @@ void yarn_dep_global_destroy (void) {
 
 
 
-bool yarn_dep_store (yarn_tsize_t pool_id, void* addr, size_t size) {
+
+bool yarn_dep_thread_init (yarn_word_t pool_id, yarn_word_t epoch) {
+  yarn_word_t* p_epoch = (yarn_word_t*) malloc(sizeof(yarn_word_t));
+  if (!p_epoch) goto alloc_error;
+
+  *p_epoch = epoch;
+  yarn_pstore_store(g_epoch_store, pool_id, p_epoch);
+  return true;
+
+ alloc_error:
+  perror(__FUNCTION__);
+  return false;
+}
+
+void yarn_dep_thread_destroy (yarn_word_t pool_id) {
+  yarn_word_t* p_epoch =  (yarn_word_t*) yarn_pstore_load(g_epoch_store, pool_id);
+  free(p_epoch);
+  yarn_pstore_store(g_epoch_store, pool_id, NULL);
+}
+
+
+
+
+bool yarn_dep_store (yarn_word_t pool_id, void* addr, size_t size) {
   assert(size <= sizeof(wbuf_t));
 
   struct addr_dep* tmp_dep = yarn_pmem_alloc(g_addr_dep_alloc, pool_id);
@@ -156,14 +163,14 @@ bool yarn_dep_store (yarn_tsize_t pool_id, void* addr, size_t size) {
 
 }
 
-uint_fast32_t yarn_dep_loadv (yarn_tsize_t pool_id, void* addr, size_t size) {
+uint_fast32_t yarn_dep_loadv (yarn_word_t pool_id, void* addr, size_t size) {
   (void) pool_id;
   (void) addr;
   (void) size;
   return 0; //! \todo
 }
 
-uintptr_t yarn_dep_loadp (yarn_tsize_t pool_id, void* addr) {
+uintptr_t yarn_dep_loadp (yarn_word_t pool_id, void* addr) {
   (void) pool_id;
   (void) addr;
   return 0; //! \todo

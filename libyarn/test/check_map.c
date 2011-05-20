@@ -128,7 +128,7 @@ static void t_map_para_setup (void) {
   bool ret = yarn_tpool_init();
   fail_if(!ret);
 
-  yarn_tsize_t pool_size = yarn_tpool_size();
+  yarn_word_t pool_size = yarn_tpool_size();
   fail_if (pool_size <= 1, "Not enough CPUs detected (%d).", pool_size);
 
   t_map_basic_setup();
@@ -140,7 +140,7 @@ static void t_map_para_teardown (void) {
 
 
 // Actual test for t_map_para_distinct_add.
-static bool t_map_para_distinct_add_worker (yarn_tsize_t pool_id, void* task) {
+static bool t_map_para_distinct_add_worker (yarn_word_t pool_id, void* task) {
   (void) task;
 
   uintptr_t addr_start = 10000UL * (pool_id+1);
@@ -175,7 +175,7 @@ END_TEST
 
 
 // Actual test for t_map_para_duplicate_add
-static bool t_map_para_duplicate_add_worker (yarn_tsize_t pool_id, void* task) {
+static bool t_map_para_duplicate_add_worker (yarn_word_t pool_id, void* task) {
   (void) task;
 
   const int ele_count = 20;

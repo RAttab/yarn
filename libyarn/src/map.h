@@ -14,9 +14,7 @@ want to clear the table, just free it and re-initialize it.
 #define YARN_MAP_H_
 
 
-#include <stdint.h>
-#include <stddef.h>
-
+#include <types.h>
 
 struct yarn_map;
 
