@@ -96,9 +96,16 @@ inline void yarn_writep_barrier(yarn_atomic_ptr* a, yarn_atomp_t ptr) {
 inline yarn_atomv_t yarn_incv(yarn_atomic_var* a) {
   return __sync_add_and_fetch(&a->var, 1);
 }
+inline yarn_atomv_t yarn_get_and_incv(yarn_atomic_var* a) {
+  return __sync_fetch_and_add(&a->var, 1);
+}
+
 //! Atomically decrements the variable.
-inline yarn_atomp_t yarn_decv(yarn_atomic_var* a) {
+inline yarn_atomv_t yarn_decv(yarn_atomic_var* a) {
   return __sync_sub_and_fetch(&a->var, 1);
+}
+inline yarn_atomv_t yarn_get_and_decv(yarn_atomic_var* a) {
+  return __sync_fetch_and_sub(&a->var, 1);
 }
 
 

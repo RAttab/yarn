@@ -19,7 +19,7 @@ enough times overflow and come back to it's original value then that call will f
 #include "atomic.h"
 
 
-//! Atomic timestamp type. Only manipulate through the yarn_ts_xxx functions.
+//! Atomic timestamp type. Only manipulate through the yarn_timestamp_xxx functions.
 typedef yarn_atomic_var yarn_timestamp_t;
 
 
@@ -28,38 +28,39 @@ typedef yarn_atomic_var yarn_timestamp_t;
 
 
 //!
-inline void yarn_ts_init (yarn_timestamp_t* ts) {
+inline bool yarn_timestamp_init (yarn_timestamp_t* ts) {
   yarn_writev(ts, 0);
+  return true;
 }
 
 //!
-inline void yarn_ts_free (yarn_timestamp_t* ts) {
+inline void yarn_timestamp_destroy (yarn_timestamp_t* ts) {
   ((void) ts); //NOOP - Nothing to do in here.
 }
 
 
 //! Atomically reads the value of the timestamp. This is a memory barrier operation.
-inline yarn_word_t yarn_ts_sample (yarn_timestamp_t* ts) {
+inline yarn_word_t yarn_timestamp_sample (yarn_timestamp_t* ts) {
   return yarn_readv(ts);
 }
 
 
 //! Atomically increments the timestamp.
-inline yarn_word_t yarn_ts_inc (yarn_timestamp_t* ts) {
+inline yarn_word_t yarn_timestamp_inc (yarn_timestamp_t* ts) {
   return yarn_incv(ts);
 }
 
 //! Increments the timestamps if it's equal to old_val. All done atomicly.
-inline bool yarn_ts_inc_eq (yarn_timestamp_t* ts, yarn_word_t old_val) {
+inline bool yarn_timestamp_inc_eq (yarn_timestamp_t* ts, yarn_word_t old_val) {
   return yarn_casv(ts, old_val, old_val+1) == old_val;
 }
 
 
 /*!
-Returns 0 if the timestamps are equal, a negative value if old_val is greater then new_val
-and a positive value if new_val is greater then old_val.
+Returns 0 if the timestamps are equal, a negative value if old_val is smaller then new_val
+and a positive value if new_val is smaller then old_val.
 */
-inline int yarn_ts_comp (yarn_word_t old_val, yarn_word_t new_val) {
+inline int yarn_timestamp_comp (yarn_word_t old_val, yarn_word_t new_val) {
   if (old_val == new_val) {
     return 0;
   }
@@ -69,7 +70,7 @@ inline int yarn_ts_comp (yarn_word_t old_val, yarn_word_t new_val) {
 
   // This check only works in reasonable cases.
   if (old_mask == new_mask) {
-    return new_val < old_val ? -1 : 1;
+    return old_val < new_val ? -1 : 1;
   }
   else {
     // If the flags are diferent then an overflow might have occured

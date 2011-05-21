@@ -82,6 +82,7 @@ bool yarn_dep_global_init (size_t ws_size) {
 
   return true;
 
+  // yarn_pstore_destroy(g_epoch_store);
  epoch_store_error:
   yarn_pmem_destroy(g_addr_dep_alloc);
  allocator_error:
@@ -94,6 +95,14 @@ bool yarn_dep_global_init (size_t ws_size) {
 void yarn_dep_global_destroy (void) {
   yarn_map_destroy(g_dependency_map);
   yarn_pmem_destroy(g_addr_dep_alloc);
+
+  for (yarn_word_t pool_id = 0; pool_id < yarn_tpool_size(); ++pool_id) {
+    yarn_word_t* p_epoch = (yarn_word_t*) yarn_pstore_load(g_epoch_store, pool_id);
+    if (p_epoch != NULL) {
+      free(p_epoch);
+    }
+  }
+
   yarn_pstore_destroy(g_epoch_store);
 }
 
@@ -101,11 +110,16 @@ void yarn_dep_global_destroy (void) {
 
 
 bool yarn_dep_thread_init (yarn_word_t pool_id, yarn_word_t epoch) {
-  yarn_word_t* p_epoch = (yarn_word_t*) malloc(sizeof(yarn_word_t));
-  if (!p_epoch) goto alloc_error;
+  yarn_word_t* p_epoch = yarn_pstore_load(g_epoch_store, pool_id);
+  
+  if (p_epoch == NULL) {
+    p_epoch = (yarn_word_t*) malloc(sizeof(yarn_word_t));
+    if (!p_epoch) goto alloc_error;
+
+    yarn_pstore_store(g_epoch_store, pool_id, p_epoch);
+  }
 
   *p_epoch = epoch;
-  yarn_pstore_store(g_epoch_store, pool_id, p_epoch);
   return true;
 
  alloc_error:
@@ -114,9 +128,7 @@ bool yarn_dep_thread_init (yarn_word_t pool_id, yarn_word_t epoch) {
 }
 
 void yarn_dep_thread_destroy (yarn_word_t pool_id) {
-  yarn_word_t* p_epoch =  (yarn_word_t*) yarn_pstore_load(g_epoch_store, pool_id);
-  free(p_epoch);
-  yarn_pstore_store(g_epoch_store, pool_id, NULL);
+  (void) pool_id;
 }
 
 
@@ -143,9 +155,6 @@ bool yarn_dep_store (yarn_word_t pool_id, void* addr, size_t size) {
   uint32_t read_flags = dep->read_flags;
   (void) read_flags;
   /*!
-
-    \todo Finish the bit manip stuff.
-
   dep->write_flags |= 1 << ???;
   memcpy(dep->write_buffer[???], addr, size);
   */

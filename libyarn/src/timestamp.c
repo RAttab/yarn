@@ -8,13 +8,13 @@ inline or if the user tries to grab the address.
 
 #include "timestamp.h"
 
-extern inline void yarn_ts_init (yarn_timestamp_t* ts);
-extern inline void yarn_ts_free (yarn_timestamp_t* ts);
+extern inline bool yarn_timestamp_init (yarn_timestamp_t* ts);
+extern inline void yarn_timestamp_destroy (yarn_timestamp_t* ts);
 
-extern inline yarn_word_t yarn_ts_sample (yarn_timestamp_t* ts);
+extern inline yarn_word_t yarn_timestamp_sample (yarn_timestamp_t* ts);
 
-extern inline yarn_word_t yarn_ts_inc (yarn_timestamp_t* ts);
-extern inline bool yarn_ts_inc_eq (yarn_timestamp_t* ts, yarn_word_t old_val);
+extern inline yarn_word_t yarn_timestamp_inc (yarn_timestamp_t* ts);
+extern inline bool yarn_timestamp_inc_eq (yarn_timestamp_t* ts, yarn_word_t old_val);
 
-extern inline int yarn_ts_comp (yarn_word_t old_val, yarn_word_t new_val);
+extern inline int yarn_timestamp_comp (yarn_word_t old_val, yarn_word_t new_val);
 

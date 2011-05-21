@@ -22,7 +22,10 @@ extern inline void yarn_writev_barrier(yarn_atomic_var* a, yarn_atomv_t var);
 extern inline void yarn_writep_barrier(yarn_atomic_ptr* a, yarn_atomp_t ptr);
 
 extern inline yarn_atomv_t yarn_incv(yarn_atomic_var* a);
+extern inline yarn_atomv_t yarn_get_and_decv(yarn_atomic_var* a);
+
 extern inline yarn_atomp_t yarn_decv(yarn_atomic_var* a);
+extern inline yarn_atomv_t yarn_get_and_decv(yarn_atomic_var* a);
 
 extern inline yarn_atomv_t yarn_casv (yarn_atomic_var* a, 
 				      yarn_atomv_t oldval, 
