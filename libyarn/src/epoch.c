@@ -18,7 +18,7 @@ the epochs to infinity and still keep the comparaison coherent.
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
-
+#include <pthread.h>
 
 
 struct epoch_info {
@@ -35,9 +35,12 @@ static yarn_atomic_var g_epoch_first;
 static yarn_atomic_var g_epoch_next;
 
 
+static inline size_t get_epoch_index (yarn_word_t epoch) {
+  return epoch % g_epoch_list_size;
+}
+
 static inline struct epoch_info* get_epoch_info (yarn_word_t epoch) {
-  size_t index = epoch % g_epoch_list_size;
-  return &(g_epoch_list[index]);
+  return &(g_epoch_list[get_epoch_index(epoch)]);
 }
 
 
@@ -49,6 +52,8 @@ bool yarn_epoch_init(void) {
 
   for (size_t i = 0; i < g_epoch_list_size; ++i) {
     yarn_writev(&g_epoch_list[i].status, yarn_epoch_commit);
+    g_epoch_list[i].task = NULL;
+    g_epoch_list[i].data = NULL;
   }
   
   yarn_writev(&g_epoch_first, 0);
@@ -79,18 +84,56 @@ yarn_word_t yarn_epoch_last(void) {
   return yarn_readv(&g_epoch_next);
 }
 
+
+static inline yarn_word_t inc_epoch_next () {
+  yarn_word_t cur_next;
+  do {
+    cur_next = yarn_readv(&g_epoch_next);
+    yarn_word_t first = yarn_readv(&g_epoch_first);
+
+    // If we've reached our own tail then spin until it unblocks.
+    // Note that if this happens then there's something wrong with the thread scheduling
+    // or one of the threads is taking forever to finish.
+    // So something has gone wrong and yield can alleviate scheduling issues.
+    if (cur_next != first && get_epoch_index(cur_next) == get_epoch_index(first)) {
+      pthread_yield();
+      continue;
+    }
+    
+    // Same as above but with a small window between first being incremented and the
+    // commit status being set.
+    struct epoch_info* info = get_epoch_info(cur_next);
+    if (yarn_readv(&info->status) == yarn_epoch_done) {
+      pthread_yield();
+      continue;
+    }
+
+  } while (yarn_casv(&g_epoch_next, cur_next, cur_next+1) != cur_next);
+  
+  return cur_next;
+}
+
 yarn_word_t yarn_epoch_next(void) {
-  yarn_word_t cur_next = yarn_get_and_incv(&g_epoch_next);
+
+  yarn_word_t cur_next = inc_epoch_next();
   
   struct epoch_info* info = get_epoch_info(cur_next);
+  enum yarn_epoch_status cur_status = yarn_readv(&info->status);
 
-  // We caught up to g_epoch_first. Let's wait till it's committed.
-  // Note that this shouldn't happen unless you have 30+ or 60+ cores on your CPU.
-  yarn_spinv_neq(&info->status, yarn_epoch_waiting);
-  yarn_spinv_neq(&info->status, yarn_epoch_executing);
-  yarn_spinv_neq(&info->status, yarn_epoch_done);
+  printf("\t\t\t\t\t\t[%zu] - OVERFLOW -> WAIT - cur_status=%d\n", 
+	 cur_next, cur_status);
+  
+  // Prevents two thread executing the same epoch once it's been set to be rolled-back.
+  yarn_spinv_neq(&info->status, yarn_epoch_pending_rollback);
 
-  yarn_casv(&info->status, yarn_epoch_commit, yarn_epoch_waiting);
+  printf("\t\t\t\t\t\t[%zu] - OVERFLOW -> DONE\n", cur_next);
+
+  enum yarn_epoch_status old_status;
+  old_status = yarn_casv(&info->status, yarn_epoch_commit, yarn_epoch_waiting);
+
+  printf("[%zu] - WAITING IF COMMIT - old_status=%d\n", cur_next, old_status);
+
+  assert(old_status == yarn_epoch_commit || old_status == yarn_epoch_rollback);
 
   return cur_next;
 }
@@ -102,16 +145,59 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
   for (yarn_word_t epoch = start; yarn_timestamp_comp(epoch, epoch_last) < 0; ++epoch) {
     struct epoch_info* info = get_epoch_info(epoch);
 
-    enum yarn_epoch_status status = yarn_readv(&info->status);
-    assert(status == yarn_epoch_executing || 
-	   status == yarn_epoch_done || 
-	   status == yarn_epoch_rollback);
+    bool skip_epoch = false;
+    enum yarn_epoch_status old_status;
+    enum yarn_epoch_status new_status;
 
-    yarn_writev_barrier(&info->status, yarn_epoch_rollback);
+    // Set the rollback status depending on the current status.
+    do {
+      old_status = yarn_readv(&info->status);
 
+      switch (old_status) {
+
+      case yarn_epoch_commit:
+	// There's a small window in next() between when the g_epoch_next is 
+	// incremented and when the commit status is set to waiting.
+	// In that window the epoch will have a valid commit state.
+      case yarn_epoch_rollback:
+      case yarn_epoch_pending_rollback:
+	skip_epoch = true;
+	break;
+      case yarn_epoch_executing:
+	new_status = yarn_epoch_pending_rollback;
+	break;
+      
+      case yarn_epoch_waiting:
+      case yarn_epoch_done:
+	new_status = yarn_epoch_rollback;
+	break;
+      default:
+	printf("[%zu] - DO_ROLLBACK - ERROR - old_status=%d\n", epoch, old_status);
+	assert(false);
+      }
+
+      if (skip_epoch) {
+	break;
+      }
+
+    } while(yarn_casv(&info->status, old_status, new_status) != old_status);
+
+    if (skip_epoch) {
+      continue;
+    }
+
+    printf("[%zu] - DO_ROLLBACK - old_status=%d, new_status=%d\n", 
+	   epoch, old_status, new_status);
   }
 
-  yarn_writev_barrier(&g_epoch_next, start);
+  // Reset next to re-execute the rollback values.
+  yarn_word_t old_next;
+  do {
+    old_next = yarn_readv(&g_epoch_next);
+    if (yarn_timestamp_comp(old_next, start) <= 0) {
+      break;
+    }
+  } while(yarn_casv(&g_epoch_next, old_next, start) != old_next);
 }
 
 
@@ -121,21 +207,23 @@ bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data) {
 
   // increment first if it has the correct status.
   do {
+
     to_commit = yarn_readv(&g_epoch_first);
     yarn_mem_barrier();
-    yarn_word_t next = yarn_readv(&g_epoch_next);
+    yarn_word_t next = yarn_epoch_last();
 
     // We can tolerate false positives on this check.    
     if (to_commit == next) {
       return false;
     }
-    
+
     info = get_epoch_info(to_commit);
-    if (yarn_readv(&info->status) != yarn_epoch_done) {
+    enum yarn_epoch_status status = yarn_readv(&info->status);
+    if (status != yarn_epoch_done) {
       return false;
     }
 
-  } while (yarn_casv_fast(&g_epoch_first, to_commit, to_commit+1) != to_commit);
+  } while (yarn_casv(&g_epoch_first, to_commit, to_commit+1) != to_commit);
 
   *task = info->task;
   info->task = NULL;
@@ -153,36 +241,72 @@ bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data) {
 void yarn_epoch_set_commit(yarn_word_t epoch) {
   struct epoch_info* info = get_epoch_info(epoch);
 
-  enum yarn_epoch_status old_status;
-  old_status = yarn_casv(&info->status, yarn_epoch_done, yarn_epoch_commit);
+  enum yarn_epoch_status old_status = yarn_readv(&info->status);
+  printf("[%zu] - COMMIT - old_status=%d\n", epoch, old_status);
+
   assert(old_status == yarn_epoch_done);
+  (void) old_status; // Warning supression.
+
+  yarn_writev_barrier(&info->status, yarn_epoch_commit);
 }
 
 void yarn_epoch_set_done(yarn_word_t epoch) {
   struct epoch_info* info = get_epoch_info(epoch);
   
-  enum yarn_epoch_status status = yarn_readv(&info->status);
-  assert(status == yarn_epoch_executing || status == yarn_epoch_rollback);
-  (void) status; // warning suppresion.
+  enum yarn_epoch_status old_status;
+  enum yarn_epoch_status new_status;
 
-  yarn_casv(&info->status, yarn_epoch_executing, yarn_epoch_done);
+  do {
+    old_status = yarn_readv(&info->status);
+
+    switch (old_status) {
+
+    case yarn_epoch_executing:
+      new_status = yarn_epoch_done;
+      break;
+    case yarn_epoch_pending_rollback:
+      new_status = yarn_epoch_rollback;
+      break;
+    default:
+      printf("[%zu] - DONE - ERROR - old_status=%d\n", epoch, old_status);
+      assert(false && (
+	     old_status != yarn_epoch_executing ||
+	     old_status != yarn_epoch_pending_rollback));
+    }
+  } while (yarn_casv(&info->status, old_status, new_status) != old_status);
+
+  printf("[%zu] - DONE - old_status=%d, new_status=%d\n", 
+	 epoch, old_status, new_status);
 }
 
-void yarn_epoch_set_executing(yarn_word_t epoch) {
- struct epoch_info* info = get_epoch_info(epoch);
+bool yarn_epoch_set_executing(yarn_word_t epoch) {
+  struct epoch_info* info = get_epoch_info(epoch);
   
   enum yarn_epoch_status status = yarn_readv(&info->status);
+  if (status == yarn_epoch_rollback) {
+    printf("[%zu] - EXECUTING -> ROLLBACK - old_status=%d\n", epoch, status);
+    return false;
+  }
+
+  printf("[%zu] - EXECUTING - old_status=%d\n", epoch, status);
+
   assert(status == yarn_epoch_waiting);
   (void) status; // warning suppresion.
 
   yarn_writev_barrier(&info->status, yarn_epoch_executing);
+  return true;
 }
 
 void yarn_epoch_set_waiting(yarn_word_t epoch) {
  struct epoch_info* info = get_epoch_info(epoch);
   
   enum yarn_epoch_status status = yarn_readv(&info->status);
-  assert(status == yarn_epoch_rollback || status == yarn_epoch_commit);
+
+  printf("[%zu] - WAITING - old_status=%d\n", epoch, status);
+
+  // While the commit -> waiting transition is valid, it's handled by next.
+  //   This method is made specifically for the rollback -> waiting transition.
+  assert(status == yarn_epoch_rollback);
   (void) status; // warning suppresion.
 
   yarn_writev_barrier(&info->status, yarn_epoch_waiting);

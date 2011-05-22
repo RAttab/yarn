@@ -24,7 +24,7 @@ typedef yarn_atomic_var yarn_timestamp_t;
 
 
 // Sets the highest order bit which is used as a flag to detect overflows.
-#define YARN_TIMESTAMP_FLAG_MASK (1ULL << (sizeof(yarn_word_t)*8-1))
+#define YARN_TIMESTAMP_FLAG_MASK (3ULL << (sizeof(yarn_word_t)*8-2))
 
 
 //!
@@ -72,10 +72,14 @@ inline int yarn_timestamp_comp (yarn_word_t old_val, yarn_word_t new_val) {
   if (old_mask == new_mask) {
     return old_val < new_val ? -1 : 1;
   }
+  else if (old_mask == 0) {
+    return new_mask == YARN_TIMESTAMP_FLAG_MASK ? 1 : -1;
+  }
+  else if (new_mask == 0) {
+    return old_mask == YARN_TIMESTAMP_FLAG_MASK ? -1 : 1;
+  }
   else {
-    // If the flags are diferent then an overflow might have occured
-    //  In any case, new_val is ahead since we can only increase linearly.
-    return 1;
+    return old_mask < new_mask ? -1 : 1;
   }
 }
 

@@ -19,11 +19,23 @@ era of 30+ core CPUs then this class will need to be updated so that it works be
 
 
 enum yarn_epoch_status {
-  yarn_epoch_waiting,   //! Waiting to be executed.
-  yarn_epoch_executing, //! Currently executing.
-  yarn_epoch_done,      //! Ready for commit.
-  yarn_epoch_rollback,  //! Needs to be rollbacked.
-  yarn_epoch_commit     //! Is committed and entry can be reused.
+  //! Waiting to be executed.
+  yarn_epoch_waiting = 1,
+         
+  //! Currently executing.
+  yarn_epoch_executing = 2,
+
+  //! Ready for commit.
+  yarn_epoch_done = 3,             
+
+  //! Rollback detected but CAN'T safely performed.
+  yarn_epoch_pending_rollback = 4, 
+
+  //! Rollback detected and CAN be safely performed.
+  yarn_epoch_rollback = 5,
+
+  //! Is committed and entry can be reused.
+  yarn_epoch_commit = 6
 };
 
 
@@ -51,7 +63,7 @@ They only update or prepare the epoch data structures.
 void yarn_epoch_do_rollback(yarn_word_t start);
 bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data);
 void yarn_epoch_set_commit(yarn_word_t epoch);
-void yarn_epoch_set_executing(yarn_word_t epoch);
+bool yarn_epoch_set_executing(yarn_word_t epoch);
 void yarn_epoch_set_done(yarn_word_t epoch);
 void yarn_epoch_set_waiting(yarn_word_t epoch);
 

@@ -90,6 +90,20 @@ START_TEST(t_epoch_commit) {
     fail_if(ret);
   }
 
+  {
+    yarn_word_t next_epoch = yarn_epoch_next();
+
+    bool ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
+    fail_if(ret);
+
+    yarn_epoch_set_executing(next_epoch);
+    yarn_epoch_set_done(next_epoch);
+
+    ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
+    fail_if(!ret);
+    yarn_epoch_set_commit(epoch_to_commit);
+  }
+
   for (int j = 0; j < IT_COUNT; ++j) {
 
     for (int i = 0; i < IT_COUNT; ++i) {
@@ -128,20 +142,6 @@ static inline void waste_time() {
 }
 
 
-static yarn_word_t find_safe_rollback_epoch(yarn_word_t start) {
-  yarn_word_t to_rollback = start;
-
-  for (yarn_word_t e = yarn_epoch_last()-1; e != start; --e) {
-    enum yarn_epoch_status status = yarn_epoch_get_status(e);
-    if (status == yarn_epoch_waiting) {
-      break;
-    }
-    to_rollback = e;
-  }
-
-  return to_rollback;
-}
-
 // Simulates a basic epoch processing loop. Since the functions have to be used in a very
 // specific way, we try to emulate actual use as much as possible.
 //! \todo need to throw in some fail_*.
@@ -149,44 +149,48 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
   (void) pool_id;
   (void) task;
 
-  for (int i = 0; i < 10000; ++i) {
+  for (int i = 0; i < 100; ++i) {
     
+    // Grab the next epoch to execute.
     const yarn_word_t epoch = yarn_epoch_next();
 
-    // Fake rollback phase.
+    // Rollback phase
+    //   Rollback our epoch if necessary.
     {
       enum yarn_epoch_status status = yarn_epoch_get_status(epoch);
       if (status == yarn_epoch_rollback) {
+	printf("<%zu> - NEXT=%zu -> ROLLBACK\n", pool_id, epoch);
 	waste_time();
 	yarn_epoch_set_waiting(epoch);
       }
+      else {
+	printf("<%zu> - NEXT=%zu\n", pool_id, epoch);
+      }
     }
     
-    
-
-    // Fake execution phase.
+    // Execution phase.
+    //   Executes our epoch or randomly trigger rollbacks.
     {
-      yarn_epoch_set_executing(epoch);
-      waste_time();
-      
-      if (rand() % 5 == 0) {
-	yarn_word_t to_rollback = find_safe_rollback_epoch(epoch);
-	if (to_rollback != epoch) {
-	  yarn_epoch_do_rollback(to_rollback);
-	  continue;
-	}
+      if (!yarn_epoch_set_executing(epoch)) {
+	continue;
       }
-      
+      waste_time();
+      if (rand() % 5 == 0) {
+	printf("<%zu> - ROLLBACK=%zu\n", pool_id, epoch+1);	  
+	yarn_epoch_do_rollback(epoch+1);
+      }
       yarn_epoch_set_done(epoch);
     }
 
-    // Fake commit phase
+    // Commit phase
+    //   Commit any finished epochs including our own.
     {
       yarn_word_t to_commit;
       void* task;
       void* data;
       while(yarn_epoch_get_next_commit(&to_commit, &task, &data)) {
 	waste_time();
+	printf("<%zu> - COMMIT=%zu\n", pool_id, to_commit);
 	yarn_epoch_set_commit(to_commit);
       }
     }
@@ -196,6 +200,8 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
 }
 
 START_TEST(t_epoch_para) {
+  printf("\n\n***********************************************************************\n\n\n");
+
   yarn_tpool_init();
   yarn_tpool_exec(t_epoch_para_worker, NULL);
   yarn_tpool_destroy();
@@ -209,9 +215,16 @@ Suite* yarn_epoch_suite (void) {
 
   TCase* tc_basic = tcase_create("yarn_epoch.basic");
   tcase_add_checked_fixture(tc_basic, t_epoch_setup, t_epoch_teardown);
+  tcase_set_timeout(tc_basic, 100000);
+  (void) t_epoch_next;
+  (void) t_epoch_rollback;
+  (void) t_epoch_commit;
+
+  /*
   tcase_add_test(tc_basic, t_epoch_next);
   tcase_add_test(tc_basic, t_epoch_rollback);
   tcase_add_test(tc_basic, t_epoch_commit);
+  */
   tcase_add_test(tc_basic, t_epoch_para);
   suite_add_tcase(s, tc_basic);
 
