@@ -15,6 +15,8 @@ Suite* yarn_tpool_suite();
 Suite* yarn_pstore_suite();
 Suite* yarn_pmem_suite();
 
+Suite* yarn_epoch_suite();
+
 Suite* yarn_map_suite();
 
 

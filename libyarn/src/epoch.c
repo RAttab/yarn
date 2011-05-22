@@ -80,11 +80,7 @@ yarn_word_t yarn_epoch_last(void) {
 }
 
 yarn_word_t yarn_epoch_next(void) {
-  yarn_word_t cur_next;
-
-  do {
-    cur_next = yarn_readv(&g_epoch_next);
-  } while (yarn_casv(&g_epoch_next, cur_next, cur_next+1));
+  yarn_word_t cur_next = yarn_get_and_incv(&g_epoch_next);
   
   struct epoch_info* info = get_epoch_info(cur_next);
 
@@ -106,34 +102,90 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
   for (yarn_word_t epoch = start; yarn_timestamp_comp(epoch, epoch_last) < 0; ++epoch) {
     struct epoch_info* info = get_epoch_info(epoch);
 
+    enum yarn_epoch_status status = yarn_readv(&info->status);
+    assert(status == yarn_epoch_executing || 
+	   status == yarn_epoch_done || 
+	   status == yarn_epoch_rollback);
+
     yarn_writev_barrier(&info->status, yarn_epoch_rollback);
 
-    if(epoch == start) {
-      yarn_writev(&g_epoch_next, start);
-    }
   }
+
+  yarn_writev_barrier(&g_epoch_next, start);
 }
 
 
-yarn_word_t yarn_epoch_do_commit_first(void** task, void** data) {
+bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data) {
+  yarn_word_t to_commit;
+  struct epoch_info* info;
 
+  // increment first if it has the correct status.
+  do {
+    to_commit = yarn_readv(&g_epoch_first);
+    yarn_mem_barrier();
+    yarn_word_t next = yarn_readv(&g_epoch_next);
 
-  yarn_word_t to_commit = yarn_get_and_incv(&g_epoch_first);
+    // We can tolerate false positives on this check.    
+    if (to_commit == next) {
+      return false;
+    }
+    
+    info = get_epoch_info(to_commit);
+    if (yarn_readv(&info->status) != yarn_epoch_done) {
+      return false;
+    }
 
-  struct epoch_info* info = get_epoch_info(to_commit);
-  
+  } while (yarn_casv_fast(&g_epoch_first, to_commit, to_commit+1) != to_commit);
+
   *task = info->task;
   info->task = NULL;
 
   *data = info->data;
   info->data = NULL;
+
+  *epoch = to_commit;
   
-  // Make sure the data was properly cleaned up.
   assert(yarn_readv(&info->status) == yarn_epoch_done);
 
-  yarn_writev_barrier(&info->status, yarn_epoch_commit);
+  return true;
+}
 
-  return to_commit;
+void yarn_epoch_set_commit(yarn_word_t epoch) {
+  struct epoch_info* info = get_epoch_info(epoch);
+
+  enum yarn_epoch_status old_status;
+  old_status = yarn_casv(&info->status, yarn_epoch_done, yarn_epoch_commit);
+  assert(old_status == yarn_epoch_done);
+}
+
+void yarn_epoch_set_done(yarn_word_t epoch) {
+  struct epoch_info* info = get_epoch_info(epoch);
+  
+  enum yarn_epoch_status status = yarn_readv(&info->status);
+  assert(status == yarn_epoch_executing || status == yarn_epoch_rollback);
+  (void) status; // warning suppresion.
+
+  yarn_casv(&info->status, yarn_epoch_executing, yarn_epoch_done);
+}
+
+void yarn_epoch_set_executing(yarn_word_t epoch) {
+ struct epoch_info* info = get_epoch_info(epoch);
+  
+  enum yarn_epoch_status status = yarn_readv(&info->status);
+  assert(status == yarn_epoch_waiting);
+  (void) status; // warning suppresion.
+
+  yarn_writev_barrier(&info->status, yarn_epoch_executing);
+}
+
+void yarn_epoch_set_waiting(yarn_word_t epoch) {
+ struct epoch_info* info = get_epoch_info(epoch);
+  
+  enum yarn_epoch_status status = yarn_readv(&info->status);
+  assert(status == yarn_epoch_rollback || status == yarn_epoch_commit);
+  (void) status; // warning suppresion.
+
+  yarn_writev_barrier(&info->status, yarn_epoch_waiting);
 }
 
 
@@ -141,11 +193,6 @@ yarn_word_t yarn_epoch_do_commit_first(void** task, void** data) {
 enum yarn_epoch_status yarn_epoch_get_status (yarn_word_t epoch) {
   struct epoch_info* info = get_epoch_info(epoch);
   return yarn_readv(&info->status);
-}
-
-void yarn_epoch_set_status(yarn_word_t epoch, enum yarn_epoch_status status) {
-  struct epoch_info* info = get_epoch_info(epoch);
-  yarn_writev(&info->status, status);
 }
 
 void* yarn_epoch_get_task (yarn_word_t epoch) {
