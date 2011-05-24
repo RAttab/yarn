@@ -101,11 +101,12 @@ yarn_word_t yarn_epoch_last(void) {
 static inline yarn_word_t inc_epoch_next () {
 
   int attempts = 0;
+  (void) attempts;
 
   yarn_word_t cur_next;
   bool retry = false;
   do {
-    assert(attempts++ <= 50);
+    //    assert(attempts++ <= 50);
     cur_next = yarn_readv(&g_epoch_next);
     yarn_word_t first = yarn_readv(&g_epoch_first);
     retry = false;
@@ -129,8 +130,22 @@ static inline yarn_word_t inc_epoch_next () {
     // commit status being set.
     struct epoch_info* info = get_epoch_info(cur_next);
     enum yarn_epoch_status status = yarn_readv(&info->status);
+
     if (yarn_readv(&info->status) == yarn_epoch_done) {
       printf("\t\t\t\t\t\t[%zu] - INC -> STATUS - first=%zu, status=%d\n", 
+	     cur_next, first, status);
+
+      YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
+      pthread_yield();
+      YARN_CHECK_RET0(pthread_rwlock_rdlock(&g_rollback_lock));
+
+      retry = true;
+      continue;
+    }
+
+    // The epoch is not yet ready so wait for it.
+    else if (yarn_readv(&info->status) == yarn_epoch_pending_rollback) {
+      printf("\t\t\t\t\t\t[%zu] - INC -> PENDING - first=%zu, status=%d\n", 
 	     cur_next, first, status);
 
       YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
@@ -155,17 +170,6 @@ yarn_word_t yarn_epoch_next(enum yarn_epoch_status* old_status) {
   yarn_word_t cur_next = inc_epoch_next();
   
   struct epoch_info* info = get_epoch_info(cur_next);
-  enum yarn_epoch_status cur_status = yarn_readv(&info->status);
-
-  printf("\t\t\t\t\t\t[%zu] - OVERFLOW -> WAIT - cur_status=%d\n", 
-	 cur_next, cur_status);
-
-  // Prevents two thread executing the same epoch once it's been set to be rolled-back.
-
-  //! \bug deadlocks in the pending_rollback thread is trying to do a rollback.
-  yarn_spinv_neq(&info->status, yarn_epoch_pending_rollback);
-
-  printf("\t\t\t\t\t\t[%zu] - OVERFLOW -> DONE\n", cur_next);
 
   *old_status = yarn_readv(&info->status);
   yarn_writev(&info->status, yarn_epoch_waiting);
