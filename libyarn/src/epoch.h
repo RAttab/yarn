@@ -53,7 +53,7 @@ Returns the next epoch that should be executed. This may either be a rollbacked 
 the status is to \c yarn_epoch_rollback or a newly generated epoch if the status is set to
 \c yarn_epoch_waiting.
 */
-yarn_word_t yarn_epoch_next(void);
+yarn_word_t yarn_epoch_next(enum yarn_epoch_status* old_status);
 
 
 /*!
@@ -65,8 +65,6 @@ bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data);
 void yarn_epoch_set_commit(yarn_word_t epoch);
 bool yarn_epoch_set_executing(yarn_word_t epoch);
 void yarn_epoch_set_done(yarn_word_t epoch);
-void yarn_epoch_set_waiting(yarn_word_t epoch);
-
 
 //! Returns the status of the epoch.
 enum yarn_epoch_status yarn_epoch_get_status (yarn_word_t epoch);

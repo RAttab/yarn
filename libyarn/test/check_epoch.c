@@ -1,6 +1,6 @@
 /*!
-\author Rémi Attab
-\license FreeBSD (see license file).
+  \author Rémi Attab
+  \license FreeBSD (see license file).
 */
 
 
@@ -25,20 +25,28 @@ static void t_epoch_teardown(void) {
 }
 
 
-#define check_status(epoch, expected)					\
-  do {									\
-    enum yarn_epoch_status status = yarn_epoch_get_status(epoch);	\
+#define check_status(status,expected)					         \
+  do {									         \
     fail_if(status != (expected), "status=%d, expected=%d", status, (expected)); \
+  } while (false)
+  
+
+#define check_epoch_status(epoch,expected)			  \
+  do {								  \
+    enum yarn_epoch_status status = yarn_epoch_get_status(epoch); \
+    check_status(status,(expected));                              \
   } while(false)
 
 
 START_TEST(t_epoch_next) {
   const yarn_word_t IT_COUNT = sizeof(yarn_word_t)*8/2;
-
+  
   for (yarn_word_t i = 0; i < IT_COUNT; ++i) {
-    yarn_word_t next_epoch = yarn_epoch_next();
+    enum yarn_epoch_status old_status;
+    yarn_word_t next_epoch = yarn_epoch_next(&old_status);
     fail_if(next_epoch != i, "next_epoch=%zu, i=%zu", next_epoch, i);
-    check_status(next_epoch, yarn_epoch_waiting);
+    check_epoch_status(next_epoch, yarn_epoch_waiting);
+    check_status(old_status, yarn_epoch_commit);
   }
 }
 END_TEST
@@ -48,7 +56,8 @@ START_TEST(t_epoch_rollback) {
   void* VALUE = (void*) 0xDEADBEEF;
   
   for (int i = 0; i < 8; ++i) {
-    yarn_word_t epoch = yarn_epoch_next();
+    enum yarn_epoch_status old_status;
+    yarn_word_t epoch = yarn_epoch_next(&old_status);
     yarn_epoch_set_data(epoch, VALUE);
     yarn_epoch_set_task(epoch, VALUE);
     yarn_epoch_set_executing(epoch);
@@ -57,22 +66,26 @@ START_TEST(t_epoch_rollback) {
   yarn_epoch_do_rollback(4);
 
   for (yarn_word_t epoch = 4; epoch < 8; ++epoch) {
-      yarn_word_t next_epoch = yarn_epoch_next();
-      
-      fail_if(next_epoch != epoch, "next_epoch=%zu, expected=%zu", next_epoch, epoch);
-      check_status(epoch, yarn_epoch_rollback);
-
-      void* data = yarn_epoch_get_data(epoch);
-      fail_if(data != VALUE, "data=%p, expected=%p", data, VALUE);
-
-      void* task = (void*) yarn_epoch_get_task(epoch);
-      fail_if(task != VALUE, "task=%p, expected=%p", task, VALUE);
+    enum yarn_epoch_status old_status;
+    yarn_word_t next_epoch = yarn_epoch_next(&old_status);
+    
+    fail_if(next_epoch != epoch, "next_epoch=%zu, expected=%zu", next_epoch, epoch);
+    check_epoch_status(epoch, yarn_epoch_waiting);
+    check_status(old_status, yarn_epoch_rollback);
+    
+    void* data = yarn_epoch_get_data(epoch);
+    fail_if(data != VALUE, "data=%p, expected=%p", data, VALUE);
+    
+    void* task = (void*) yarn_epoch_get_task(epoch);
+    fail_if(task != VALUE, "task=%p, expected=%p", task, VALUE);
   }
 
 
   for (int i = 0; i < 8; ++i) {
-    yarn_word_t next_epoch = yarn_epoch_next();
-    check_status(next_epoch, yarn_epoch_waiting);
+    enum yarn_epoch_status old_status;
+    yarn_word_t next_epoch = yarn_epoch_next(&old_status);
+    check_epoch_status(next_epoch, yarn_epoch_waiting);
+    check_status(old_status, yarn_epoch_commit);
   }
 
 }
@@ -91,7 +104,8 @@ START_TEST(t_epoch_commit) {
   }
 
   {
-    yarn_word_t next_epoch = yarn_epoch_next();
+    enum yarn_epoch_status old_status;
+    yarn_word_t next_epoch = yarn_epoch_next(&old_status);
 
     bool ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
     fail_if(ret);
@@ -107,12 +121,13 @@ START_TEST(t_epoch_commit) {
   for (int j = 0; j < IT_COUNT; ++j) {
 
     for (int i = 0; i < IT_COUNT; ++i) {
-      yarn_word_t next_epoch = yarn_epoch_next();
+      enum yarn_epoch_status old_status;
+      yarn_word_t next_epoch = yarn_epoch_next(&old_status);
       yarn_epoch_set_task(next_epoch, (void*) VALUE);
       yarn_epoch_set_executing(next_epoch);
       yarn_epoch_set_done(next_epoch);
 
-      check_status(next_epoch, yarn_epoch_done);
+      check_epoch_status(next_epoch, yarn_epoch_done);
     }
 
     for (int i = 0; i < IT_COUNT; ++i) {
@@ -120,7 +135,7 @@ START_TEST(t_epoch_commit) {
 
       fail_if(!ret);
       fail_if(task != (void*)VALUE, "task=%p, expected=%p", task, (void*) VALUE);
-      check_status(epoch_to_commit, yarn_epoch_done);
+      check_epoch_status(epoch_to_commit, yarn_epoch_done);
 
       yarn_epoch_set_commit(epoch_to_commit);
     }
@@ -151,17 +166,18 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
 
   for (int i = 0; i < 100; ++i) {
     
+    printf("<%zu> - NEXT - START\n", pool_id);
+
     // Grab the next epoch to execute.
-    const yarn_word_t epoch = yarn_epoch_next();
+    enum yarn_epoch_status old_status;
+    const yarn_word_t epoch = yarn_epoch_next(&old_status);
 
     // Rollback phase
     //   Rollback our epoch if necessary.
     {
-      enum yarn_epoch_status status = yarn_epoch_get_status(epoch);
-      if (status == yarn_epoch_rollback) {
+      if (old_status == yarn_epoch_rollback) {
 	printf("<%zu> - NEXT=%zu -> ROLLBACK\n", pool_id, epoch);
 	waste_time();
-	yarn_epoch_set_waiting(epoch);
       }
       else {
 	printf("<%zu> - NEXT=%zu\n", pool_id, epoch);
@@ -176,8 +192,9 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
       }
       waste_time();
       if (rand() % 5 == 0) {
-	printf("<%zu> - ROLLBACK=%zu\n", pool_id, epoch+1);	  
+	printf("<%zu> - ROLLBACK=%zu - START\n", pool_id, epoch+1);	  
 	yarn_epoch_do_rollback(epoch+1);
+	printf("<%zu> - ROLLBACK=%zu - END\n", pool_id, epoch+1);	  
       }
       yarn_epoch_set_done(epoch);
     }
@@ -221,9 +238,9 @@ Suite* yarn_epoch_suite (void) {
   (void) t_epoch_commit;
 
   /*
-  tcase_add_test(tc_basic, t_epoch_next);
-  tcase_add_test(tc_basic, t_epoch_rollback);
-  tcase_add_test(tc_basic, t_epoch_commit);
+    tcase_add_test(tc_basic, t_epoch_next);
+    tcase_add_test(tc_basic, t_epoch_rollback);
+    tcase_add_test(tc_basic, t_epoch_commit);
   */
   tcase_add_test(tc_basic, t_epoch_para);
   suite_add_tcase(s, tc_basic);
