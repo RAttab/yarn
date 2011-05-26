@@ -99,7 +99,7 @@ START_TEST (t_map_basic_resize) {
 
   const uintptr_t nil_value = -1;
   
-  for (uintptr_t i = 1; i < 1000; ++i) {
+  for (uintptr_t i = 1; i < 300; ++i) {
     {
       void* r = yarn_map_probe(f_map, i, (void*)i);
       fail_unless ((uintptr_t)r == i);

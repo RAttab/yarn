@@ -28,7 +28,7 @@ the epochs to infinity and still keep the comparaison coherent.
 #    define DBG(x) do{x;}while(false)
 #  else
 #    define DBG(x) ((void)0)
-#endif
+#  endif
 #else
 #  define DBG(X) ((void)0)
 #endif

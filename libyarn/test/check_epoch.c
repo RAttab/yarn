@@ -37,6 +37,28 @@ static void t_epoch_teardown(void) {
     check_status(status,(expected));                              \
   } while(false)
 
+#define set_epoch_data(epoch,value)		\
+  do {						\
+    yarn_epoch_set_data((epoch), (value));	\
+    yarn_epoch_set_task((epoch), (value));	\
+  } while(false)
+
+
+#define check_data(data, task, expected)				\
+  do {									\
+    fail_if((data) != (expected), "data=%p, expected=%p", (data), (expected)); \
+    fail_if((task) != (expected), "task=%p, expected=%p", (task), (expected)); \
+  } while(false);
+
+#define check_epoch_data(epoch,expected)				\
+  do {									\
+    void* data = yarn_epoch_get_data(epoch);				\
+    void* task = (void*) yarn_epoch_get_task(epoch);			\
+    check_data(data, task, expected);					\
+  } while(false);
+
+
+
 
 START_TEST(t_epoch_next) {
   const yarn_word_t IT_COUNT = sizeof(yarn_word_t)*8/2;
@@ -52,19 +74,96 @@ START_TEST(t_epoch_next) {
 END_TEST
 
 
-START_TEST(t_epoch_rollback) {
+START_TEST(t_epoch_rollback_waiting) {
+  void* VALUE = (void*) 0xDEADBEEF;
+  
+  enum yarn_epoch_status old_status;
+  yarn_word_t epoch_first = yarn_epoch_next(&old_status);
+  set_epoch_data(epoch_first, VALUE);
+
+  yarn_epoch_do_rollback(epoch_first);
+  check_epoch_status(epoch_first, yarn_epoch_rollback);
+  check_epoch_data(epoch_first, VALUE);
+
+  yarn_word_t epoch_second = yarn_epoch_next(&old_status);
+  check_epoch_status(epoch_second, yarn_epoch_waiting);
+  check_status(old_status, yarn_epoch_rollback);
+  
+  fail_if (epoch_first != epoch_second, 
+	   "epoch_first=%zu, epoch_second=%zu", epoch_first, epoch_second);
+
+  bool ret = yarn_epoch_set_executing(epoch_first);
+  fail_if(!ret);
+  check_epoch_data(epoch_first, VALUE);
+  check_epoch_status(epoch_second, yarn_epoch_executing);
+
+  ret = yarn_epoch_set_executing(epoch_first);
+  fail_if(ret);
+  check_epoch_data(epoch_first, VALUE);
+  check_epoch_status(epoch_first, yarn_epoch_executing);
+
+}
+END_TEST
+
+START_TEST(t_epoch_rollback_executing) {
+  void* VALUE = (void*) 0xDEADBEEF;
+  
+  enum yarn_epoch_status old_status;
+  yarn_word_t epoch = yarn_epoch_next(&old_status);
+  set_epoch_data(epoch, VALUE);
+  
+  bool ret = yarn_epoch_set_executing(epoch);
+  fail_if(!ret);
+  check_epoch_data(epoch, VALUE);
+
+  yarn_epoch_do_rollback(epoch);
+  check_epoch_status(epoch, yarn_epoch_pending_rollback);
+  check_epoch_data(epoch, VALUE);
+  
+  yarn_epoch_set_done(epoch);
+  check_epoch_status(epoch, yarn_epoch_rollback);
+  check_epoch_data(epoch, VALUE);
+}
+END_TEST
+
+START_TEST(t_epoch_rollback_done) {
+  void* VALUE = (void*) 0xDEADBEEF;
+
+  enum yarn_epoch_status old_status;
+  yarn_word_t epoch = yarn_epoch_next(&old_status);
+  set_epoch_data(epoch, VALUE);
+  
+  bool ret = yarn_epoch_set_executing(epoch);
+  fail_if(!ret);
+  check_epoch_data(epoch, VALUE);
+
+  yarn_epoch_set_done(epoch);
+  check_epoch_status(epoch, yarn_epoch_done);
+  check_epoch_data(epoch, VALUE);
+
+  yarn_epoch_do_rollback(epoch);
+  check_epoch_status(epoch, yarn_epoch_rollback);
+  check_epoch_data(epoch, VALUE);
+}
+END_TEST
+
+START_TEST(t_epoch_rollback_range) {
   void* VALUE = (void*) 0xDEADBEEF;
   
   for (int i = 0; i < 8; ++i) {
     enum yarn_epoch_status old_status;
     yarn_word_t epoch = yarn_epoch_next(&old_status);
-    yarn_epoch_set_data(epoch, VALUE);
-    yarn_epoch_set_task(epoch, VALUE);
+    set_epoch_data(epoch, VALUE);
     yarn_epoch_set_executing(epoch);
     yarn_epoch_set_done(epoch);
   }
 
   yarn_epoch_do_rollback(4);
+
+  for (yarn_word_t epoch = 0; epoch < 4; ++epoch) {
+    check_epoch_status(epoch, yarn_epoch_done);
+    check_epoch_data(epoch, VALUE);
+  }
 
   for (yarn_word_t epoch = 4; epoch < 8; ++epoch) {
     enum yarn_epoch_status old_status;
@@ -73,12 +172,7 @@ START_TEST(t_epoch_rollback) {
     fail_if(next_epoch != epoch, "next_epoch=%zu, expected=%zu", next_epoch, epoch);
     check_epoch_status(epoch, yarn_epoch_waiting);
     check_status(old_status, yarn_epoch_rollback);
-    
-    void* data = yarn_epoch_get_data(epoch);
-    fail_if(data != VALUE, "data=%p, expected=%p", data, VALUE);
-    
-    void* task = (void*) yarn_epoch_get_task(epoch);
-    fail_if(task != VALUE, "task=%p, expected=%p", task, VALUE);
+    check_epoch_data(epoch, VALUE);
   }
 
   for (int i = 0; i < 8; ++i) {
@@ -93,7 +187,7 @@ END_TEST
 
 START_TEST(t_epoch_commit) {
   const int IT_COUNT = sizeof(yarn_word_t)*8/2;
-  const uintptr_t VALUE = 0xDEADBEEF;
+  void* VALUE = (void*) 0xDEADBEEF;
   yarn_word_t epoch_to_commit;
   void* task;
   void* data;
@@ -106,6 +200,7 @@ START_TEST(t_epoch_commit) {
   {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
+    set_epoch_data(next_epoch, VALUE);
 
     bool ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
     fail_if(ret);
@@ -115,6 +210,7 @@ START_TEST(t_epoch_commit) {
 
     ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
     fail_if(!ret);
+    check_data(task, data, VALUE);
     yarn_epoch_set_commit(epoch_to_commit);
   }
 
@@ -123,18 +219,19 @@ START_TEST(t_epoch_commit) {
     for (int i = 0; i < IT_COUNT; ++i) {
       enum yarn_epoch_status old_status;
       yarn_word_t next_epoch = yarn_epoch_next(&old_status);
-      yarn_epoch_set_task(next_epoch, (void*) VALUE);
+      set_epoch_data(next_epoch, VALUE);
       yarn_epoch_set_executing(next_epoch);
       yarn_epoch_set_done(next_epoch);
 
       check_epoch_status(next_epoch, yarn_epoch_done);
+      check_epoch_data(next_epoch, VALUE);
     }
 
     for (int i = 0; i < IT_COUNT; ++i) {
       bool ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
 
       fail_if(!ret);
-      fail_if(task != (void*)VALUE, "task=%p, expected=%p", task, (void*) VALUE);
+      check_data(task, data, VALUE);
       check_epoch_status(epoch_to_commit, yarn_epoch_done);
 
       yarn_epoch_set_commit(epoch_to_commit);
@@ -235,7 +332,10 @@ Suite* yarn_epoch_suite (void) {
   TCase* tc_basic = tcase_create("yarn_epoch.basic");
   tcase_add_checked_fixture(tc_basic, t_epoch_setup, t_epoch_teardown);
   tcase_add_test(tc_basic, t_epoch_next);
-  tcase_add_test(tc_basic, t_epoch_rollback);
+  tcase_add_test(tc_basic, t_epoch_rollback_waiting);
+  tcase_add_test(tc_basic, t_epoch_rollback_executing);
+  tcase_add_test(tc_basic, t_epoch_rollback_done);
+  tcase_add_test(tc_basic, t_epoch_rollback_range);
   tcase_add_test(tc_basic, t_epoch_commit);
   tcase_add_test(tc_basic, t_epoch_para);
   suite_add_tcase(s, tc_basic);
