@@ -47,6 +47,7 @@ static const size_t g_epoch_list_size = sizeof(yarn_word_t)*8;
 
 static yarn_atomic_var g_epoch_first;
 static yarn_atomic_var g_epoch_next;
+static yarn_atomic_var g_epoch_next_commit;
 
 // Prevents a call to rollback from being executed while calling next.
 // Still allows multiple calls the next at the same time but with only one
@@ -81,6 +82,7 @@ bool yarn_epoch_init(void) {
   
   yarn_writev(&g_epoch_first, 0);
   yarn_writev(&g_epoch_next, 0);
+  yarn_writev(&g_epoch_next_commit, 0);
  
   return true;
  
@@ -134,30 +136,12 @@ static inline yarn_word_t inc_epoch_next () {
       retry = true;
       continue;
     }
-    
-    // Same as above but with a small window between first being incremented and the
-    // commit status being set.
-    struct epoch_info* info = get_epoch_info(cur_next);
-    enum yarn_epoch_status status = yarn_readv(&info->status);
-    (void)status; // Warning suppression
-
-    if (yarn_readv(&info->status) == yarn_epoch_done) {
-      /*
-      printf("\t\t\t\t\t\t[%zu] - INC -> STATUS - first=%zu, status=%d\n", 
-	     cur_next, first, status);
-      */
-
-      YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
-      pthread_yield();
-      YARN_CHECK_RET0(pthread_rwlock_rdlock(&g_rollback_lock));
-
-      retry = true;
-      continue;
-    }
 
     // The epoch is not yet ready so wait for it.
-    else if (yarn_readv(&info->status) == yarn_epoch_pending_rollback) {
+    struct epoch_info* info = get_epoch_info(cur_next);
+    if (yarn_readv(&info->status) == yarn_epoch_pending_rollback) {
       /*
+      enum yarn_epoch_status status = yarn_readv(&info->status);
       printf("\t\t\t\t\t\t[%zu] - INC -> PENDING - first=%zu, status=%d\n", 
 	     cur_next, first, status);
       */
@@ -168,6 +152,21 @@ static inline yarn_word_t inc_epoch_next () {
       retry = true;
       continue;
     }
+
+    /*    
+    // Same as above but with a small window between first being incremented and the
+    // commit status being set.
+    else if (yarn_readv(&info->status) == yarn_epoch_done) {
+      printf("\t\t\t\t\t\t[%zu] - INC -> STATUS - first=%zu, status=%d\n", 
+	     cur_next, first, status);
+      YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
+      pthread_yield();
+      YARN_CHECK_RET0(pthread_rwlock_rdlock(&g_rollback_lock));
+
+      retry = true;
+      continue;
+    }
+    */
 
     DBG(printf("\t\t\t\t\t\t[%zu] - INC - status=%d\n", cur_next, status));
   } while (retry || yarn_casv(&g_epoch_next, cur_next, cur_next+1) != cur_next);
@@ -275,9 +274,9 @@ bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data) {
   // increment first if it has the correct status.
   do {
 
-    to_commit = yarn_readv(&g_epoch_first);
+    to_commit = yarn_readv(&g_epoch_next_commit);
     yarn_mem_barrier();
-    yarn_word_t next = yarn_epoch_last();
+    yarn_word_t next = yarn_readv(&g_epoch_next);
 
     // We can tolerate false positives on this check.    
     if (to_commit == next) {
@@ -290,7 +289,7 @@ bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data) {
       return false;
     }
 
-  } while (yarn_casv(&g_epoch_first, to_commit, to_commit+1) != to_commit);
+  } while (yarn_casv(&g_epoch_next_commit, to_commit, to_commit+1) != to_commit);
 
   *task = info->task;
   info->task = NULL;
@@ -315,6 +314,24 @@ void yarn_epoch_set_commit(yarn_word_t epoch) {
   (void) old_status; // Warning supression.
 
   yarn_writev_barrier(&info->status, yarn_epoch_commit);
+
+  // Move the g_epoch_first as far as we can
+  yarn_word_t old_first;
+  yarn_word_t old_commit;
+  do {
+    old_first = yarn_readv(&g_epoch_first);
+
+    old_commit = yarn_readv(&g_epoch_next_commit);
+    if (old_first == old_commit) {
+      break;
+    }
+
+    enum yarn_epoch_status status = yarn_epoch_get_status(old_first);
+    if (status != yarn_epoch_commit) {
+      break;
+    }
+  } while (yarn_casv(&g_epoch_first, old_first, old_first+1));
+
 }
 
 void yarn_epoch_set_done(yarn_word_t epoch) {
