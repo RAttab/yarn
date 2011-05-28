@@ -153,21 +153,6 @@ static inline yarn_word_t inc_epoch_next () {
       continue;
     }
 
-    /*    
-    // Same as above but with a small window between first being incremented and the
-    // commit status being set.
-    else if (yarn_readv(&info->status) == yarn_epoch_done) {
-      printf("\t\t\t\t\t\t[%zu] - INC -> STATUS - first=%zu, status=%d\n", 
-	     cur_next, first, status);
-      YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
-      pthread_yield();
-      YARN_CHECK_RET0(pthread_rwlock_rdlock(&g_rollback_lock));
-
-      retry = true;
-      continue;
-    }
-    */
-
     DBG(printf("\t\t\t\t\t\t[%zu] - INC - status=%d\n", cur_next, status));
   } while (retry || yarn_casv(&g_epoch_next, cur_next, cur_next+1) != cur_next);
   
