@@ -25,37 +25,35 @@ static void t_epoch_teardown(void) {
 }
 
 
-#define check_status(status,expected)					         \
-  do {									         \
-    fail_if(status != (expected), "status=%d, expected=%d", status, (expected)); \
-  } while (false)
-  
 
-#define check_epoch_status(epoch,expected)			  \
-  do {								  \
-    enum yarn_epoch_status status = yarn_epoch_get_status(epoch); \
-    check_status(status,(expected));                              \
-  } while(false)
+static inline void check_status(enum yarn_epoch_status status, 
+				enum yarn_epoch_status expected) 
+{
+  fail_if(status != expected, "status=%d, expected=%d", status, expected);
+}  
 
-#define set_epoch_data(epoch,value)		\
-  do {						\
-    yarn_epoch_set_data((epoch), (value));	\
-    yarn_epoch_set_task((epoch), (value));	\
-  } while(false)
+static inline void check_epoch_status(yarn_word_t epoch, 
+				      enum yarn_epoch_status expected) 
+{
+  enum yarn_epoch_status status = yarn_epoch_get_status(epoch);
+  check_status(status,expected);
+}
 
+static inline void set_epoch_data(yarn_word_t epoch, void* value) {
+  yarn_epoch_set_data(epoch, value);
+  yarn_epoch_set_task(epoch, value);
+}
 
-#define check_data(data, task, expected)				\
-  do {									\
-    fail_if((data) != (expected), "data=%p, expected=%p", (data), (expected)); \
-    fail_if((task) != (expected), "task=%p, expected=%p", (task), (expected)); \
-  } while(false);
+static inline void check_data(void* data, void* task, void* expected) {
+  fail_if(data != expected, "data=%p, expected=%p", data, expected);
+  fail_if(task != expected, "task=%p, expected=%p", task, expected);
+}
 
-#define check_epoch_data(epoch,expected)				\
-  do {									\
-    void* data = yarn_epoch_get_data(epoch);				\
-    void* task = (void*) yarn_epoch_get_task(epoch);			\
-    check_data(data, task, expected);					\
-  } while(false);
+static inline void check_epoch_data(yarn_word_t epoch, void* expected) {
+  void* data = yarn_epoch_get_data(epoch);
+  void* task = (void*) yarn_epoch_get_task(epoch);
+  check_data(data, task, expected);
+}
 
 
 
