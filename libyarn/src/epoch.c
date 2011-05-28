@@ -182,9 +182,9 @@ yarn_word_t yarn_epoch_next(enum yarn_epoch_status* old_status) {
   struct epoch_info* info = get_epoch_info(cur_next);
 
   *old_status = yarn_readv(&info->status);
-  yarn_writev(&info->status, yarn_epoch_waiting);
+  yarn_writev(&info->status, yarn_epoch_executing);
 
-  DBG(printf("[%zu] - WAITING - old_status=%d\n", cur_next, *old_status));
+  DBG(printf("[%zu] - EXECUTING - old_status=%d\n", cur_next, *old_status));
   assert(*old_status == yarn_epoch_commit || *old_status == yarn_epoch_rollback);
 
   DBG(printf("\t\t\t\t\t\tNEXT - UNLOCK\n"));
@@ -198,7 +198,6 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
 
   YARN_CHECK_RET0(pthread_rwlock_wrlock(&g_rollback_lock));
   DBG(printf("\t\t\t\t\t\tROLLBACK - LOCK\n"));
-
   
   yarn_word_t epoch_last = yarn_epoch_last();
   
@@ -227,7 +226,6 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
 	new_status = yarn_epoch_pending_rollback;
 	break;
       
-      case yarn_epoch_waiting:
       case yarn_epoch_done:
 	new_status = yarn_epoch_rollback;
 	break;
@@ -370,33 +368,7 @@ void yarn_epoch_set_done(yarn_word_t epoch) {
 	     epoch, old_status, new_status));
 }
 
-bool yarn_epoch_set_executing(yarn_word_t epoch) {
-  struct epoch_info* info = get_epoch_info(epoch);
-
-  // Ensures that only one thread can execute an epoch at a time.
-  // That also means that a thread see it's epoch highjacked by another thread who was
-  // quicker.
-  enum yarn_epoch_status old_status;
-  old_status = yarn_casv(&info->status, yarn_epoch_waiting, yarn_epoch_executing);
-
-  DBG(printf("[%zu] - EXECUTING if WAITING - old_status=%d\n", epoch, old_status));
-  if (old_status == yarn_epoch_waiting) {
-
-    yarn_word_t old_flag;
-    yarn_word_t new_flag;
-    do {
-      old_flag = yarn_readv(&g_rollback_flag);
-      new_flag = YARN_BIT_CLEAR(old_flag, epoch);
-    } while(yarn_casv(&g_rollback_flag, old_flag, new_flag) != old_flag);
-
-    return true;
-  }
-  else {
-    return false;
-  }
-}
-
-
+ 
 enum yarn_epoch_status yarn_epoch_get_status (yarn_word_t epoch) {
   struct epoch_info* info = get_epoch_info(epoch);
   return yarn_readv(&info->status);

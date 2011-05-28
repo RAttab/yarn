@@ -65,43 +65,12 @@ START_TEST(t_epoch_next) {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
     fail_if(next_epoch != i, "next_epoch=%zu, i=%zu", next_epoch, i);
-    check_epoch_status(next_epoch, yarn_epoch_waiting);
+    check_epoch_status(next_epoch, yarn_epoch_executing);
     check_status(old_status, yarn_epoch_commit);
   }
 }
 END_TEST
 
-
-START_TEST(t_epoch_rollback_waiting) {
-  void* VALUE = (void*) 0xDEADBEEF;
-  
-  enum yarn_epoch_status old_status;
-  yarn_word_t epoch_first = yarn_epoch_next(&old_status);
-  set_epoch_data(epoch_first, VALUE);
-
-  yarn_epoch_do_rollback(epoch_first);
-  check_epoch_status(epoch_first, yarn_epoch_rollback);
-  check_epoch_data(epoch_first, VALUE);
-
-  yarn_word_t epoch_second = yarn_epoch_next(&old_status);
-  check_epoch_status(epoch_second, yarn_epoch_waiting);
-  check_status(old_status, yarn_epoch_rollback);
-  
-  fail_if (epoch_first != epoch_second, 
-	   "epoch_first=%zu, epoch_second=%zu", epoch_first, epoch_second);
-
-  bool ret = yarn_epoch_set_executing(epoch_first);
-  fail_if(!ret);
-  check_epoch_data(epoch_first, VALUE);
-  check_epoch_status(epoch_second, yarn_epoch_executing);
-
-  ret = yarn_epoch_set_executing(epoch_first);
-  fail_if(ret);
-  check_epoch_data(epoch_first, VALUE);
-  check_epoch_status(epoch_first, yarn_epoch_executing);
-
-}
-END_TEST
 
 START_TEST(t_epoch_rollback_executing) {
   void* VALUE = (void*) 0xDEADBEEF;
@@ -110,10 +79,6 @@ START_TEST(t_epoch_rollback_executing) {
   yarn_word_t epoch = yarn_epoch_next(&old_status);
   set_epoch_data(epoch, VALUE);
   
-  bool ret = yarn_epoch_set_executing(epoch);
-  fail_if(!ret);
-  check_epoch_data(epoch, VALUE);
-
   yarn_epoch_do_rollback(epoch);
   check_epoch_status(epoch, yarn_epoch_pending_rollback);
   check_epoch_data(epoch, VALUE);
@@ -131,10 +96,6 @@ START_TEST(t_epoch_rollback_done) {
   yarn_word_t epoch = yarn_epoch_next(&old_status);
   set_epoch_data(epoch, VALUE);
   
-  bool ret = yarn_epoch_set_executing(epoch);
-  fail_if(!ret);
-  check_epoch_data(epoch, VALUE);
-
   yarn_epoch_set_done(epoch);
   check_epoch_status(epoch, yarn_epoch_done);
   check_epoch_data(epoch, VALUE);
@@ -152,7 +113,6 @@ START_TEST(t_epoch_rollback_range) {
     enum yarn_epoch_status old_status;
     yarn_word_t epoch = yarn_epoch_next(&old_status);
     set_epoch_data(epoch, VALUE);
-    yarn_epoch_set_executing(epoch);
     yarn_epoch_set_done(epoch);
   }
 
@@ -168,7 +128,7 @@ START_TEST(t_epoch_rollback_range) {
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
     
     fail_if(next_epoch != epoch, "next_epoch=%zu, expected=%zu", next_epoch, epoch);
-    check_epoch_status(epoch, yarn_epoch_waiting);
+    check_epoch_status(epoch, yarn_epoch_executing);
     check_status(old_status, yarn_epoch_rollback);
     check_epoch_data(epoch, VALUE);
   }
@@ -176,7 +136,7 @@ START_TEST(t_epoch_rollback_range) {
   for (int i = 0; i < 8; ++i) {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
-    check_epoch_status(next_epoch, yarn_epoch_waiting);
+    check_epoch_status(next_epoch, yarn_epoch_executing);
     check_status(old_status, yarn_epoch_commit);
   }
 
@@ -203,7 +163,6 @@ START_TEST(t_epoch_commit) {
     bool ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
     fail_if(ret);
 
-    yarn_epoch_set_executing(next_epoch);
     yarn_epoch_set_done(next_epoch);
 
     ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
@@ -218,7 +177,6 @@ START_TEST(t_epoch_commit) {
       enum yarn_epoch_status old_status;
       yarn_word_t next_epoch = yarn_epoch_next(&old_status);
       set_epoch_data(next_epoch, VALUE);
-      yarn_epoch_set_executing(next_epoch);
       yarn_epoch_set_done(next_epoch);
 
       check_epoch_status(next_epoch, yarn_epoch_done);
@@ -282,9 +240,6 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
     // Execution phase.
     //   Executes our epoch or randomly trigger rollbacks.
     {
-      if (!yarn_epoch_set_executing(epoch)) {
-	continue;
-      }
       waste_time();
       if (rand() % 5 == 0) {
 	// printf("<%zu> - ROLLBACK=%zu - START\n", pool_id, epoch+1);	  
@@ -330,7 +285,6 @@ Suite* yarn_epoch_suite (void) {
   TCase* tc_basic = tcase_create("yarn_epoch.basic");
   tcase_add_checked_fixture(tc_basic, t_epoch_setup, t_epoch_teardown);
   tcase_add_test(tc_basic, t_epoch_next);
-  tcase_add_test(tc_basic, t_epoch_rollback_waiting);
   tcase_add_test(tc_basic, t_epoch_rollback_executing);
   tcase_add_test(tc_basic, t_epoch_rollback_done);
   tcase_add_test(tc_basic, t_epoch_rollback_range);
