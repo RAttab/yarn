@@ -78,5 +78,11 @@ void yarn_epoch_set_task (yarn_word_t epoch, void* task);
 void* yarn_epoch_get_data(yarn_word_t epoch);
 void yarn_epoch_set_data(yarn_word_t epoch, void* data);
 
+/*!
+Returns a bitfield with the bit sets for every epoch that is in a rollback state.
+Follows the conventions defined in bits.h
+*/
+yarn_word_t yarn_epoch_rollback_flags(void);
+
 
 #endif // YARN_EPOCH_H_

@@ -15,6 +15,7 @@ the epochs to infinity and still keep the comparaison coherent.
 #include <helper.h>
 #include "timestamp.h"
 #include "atomic.h"
+#include "bits.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -45,9 +46,13 @@ struct epoch_info {
 static struct epoch_info* g_epoch_list;
 static const size_t g_epoch_list_size = sizeof(yarn_word_t)*8;
 
+// Cursors for the g_epoch_list.
 static yarn_atomic_var g_epoch_first;
 static yarn_atomic_var g_epoch_next;
 static yarn_atomic_var g_epoch_next_commit;
+
+// Bitfield that keeps track of the all the rolledback epochs.
+static yarn_atomic_var g_rollback_flag;
 
 // Prevents a call to rollback from being executed while calling next.
 // Still allows multiple calls the next at the same time but with only one
@@ -57,7 +62,7 @@ static pthread_rwlock_t g_rollback_lock;
 
 
 static inline size_t get_epoch_index (yarn_word_t epoch) {
-  return epoch % g_epoch_list_size;
+  return YARN_BIT_INDEX(epoch);
 }
 
 static inline struct epoch_info* get_epoch_info (yarn_word_t epoch) {
@@ -83,6 +88,7 @@ bool yarn_epoch_init(void) {
   yarn_writev(&g_epoch_first, 0);
   yarn_writev(&g_epoch_next, 0);
   yarn_writev(&g_epoch_next_commit, 0);
+  yarn_writev(&g_rollback_flag, 0);
  
   return true;
  
@@ -115,9 +121,14 @@ yarn_word_t yarn_epoch_last(void) {
 
 
 static inline yarn_word_t inc_epoch_next () {
+  int attempts = 0;
+  (void) attempts; // Warning suppression.
+
   yarn_word_t cur_next;
   bool retry = false;
   do {
+    //assert(attempts++ <= 20);
+
     cur_next = yarn_readv(&g_epoch_next);
     yarn_word_t first = yarn_readv(&g_epoch_first);
     retry = false;
@@ -127,7 +138,7 @@ static inline yarn_word_t inc_epoch_next () {
     // or one of the threads is taking forever to finish.
     // So something has gone wrong and yield can alleviate scheduling issues.
     if (cur_next != first && get_epoch_index(cur_next) == get_epoch_index(first)) {
-      // printf("\t\t\t\t\t\t[%zu] - INC -> TAIL - first=%zu\n", cur_next, first);
+      //printf("\t\t\t\t\t\t[%zu] - INC -> TAIL - first=%zu\n", cur_next, first);
 
       YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
       pthread_yield();
@@ -152,7 +163,9 @@ static inline yarn_word_t inc_epoch_next () {
       retry = true;
       continue;
     }
-
+    
+    enum yarn_epoch_status status = yarn_readv(&info->status);
+    (void) status; // warning suppression.
     DBG(printf("\t\t\t\t\t\t[%zu] - INC - status=%d\n", cur_next, status));
   } while (retry || yarn_casv(&g_epoch_next, cur_next, cur_next+1) != cur_next);
   
@@ -225,16 +238,22 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
 
       if (skip_epoch) {
 	break;
-      }
+      }      
 
     } while(yarn_casv(&info->status, old_status, new_status) != old_status);
 
     if (skip_epoch) {
       continue;
     }
+    else {
+      DBG(printf("[%zu] - DO_ROLLBACK - old_status=%d, new_status=%d\n", 
+		 epoch, old_status, new_status));
 
-    DBG(printf("[%zu] - DO_ROLLBACK - old_status=%d, new_status=%d\n", 
-	       epoch, old_status, new_status));
+      // No need for a cas loop since anything that has been rollback will have to go
+      // through a call to next() before set_executing will return true.
+      yarn_word_t old_flag = yarn_readv(&g_rollback_flag);
+      yarn_writev(&g_rollback_flag, YARN_BIT_SET(old_flag, epoch));
+    }
   }
 
   // Reset next to re-execute the rollback values.
@@ -303,7 +322,7 @@ void yarn_epoch_set_commit(yarn_word_t epoch) {
   // Move the g_epoch_first as far as we can
   yarn_word_t old_first;
   yarn_word_t old_commit;
-  do {
+  while(true) {
     old_first = yarn_readv(&g_epoch_first);
 
     old_commit = yarn_readv(&g_epoch_next_commit);
@@ -315,7 +334,10 @@ void yarn_epoch_set_commit(yarn_word_t epoch) {
     if (status != yarn_epoch_commit) {
       break;
     }
-  } while (yarn_casv(&g_epoch_first, old_first, old_first+1));
+    
+    // Increment the value. Doesn't matter if it fails or not.
+    yarn_casv(&g_epoch_first, old_first, old_first+1);
+  }
 
 }
 
@@ -358,7 +380,14 @@ bool yarn_epoch_set_executing(yarn_word_t epoch) {
   old_status = yarn_casv(&info->status, yarn_epoch_waiting, yarn_epoch_executing);
 
   DBG(printf("[%zu] - EXECUTING if WAITING - old_status=%d\n", epoch, old_status));
-  return old_status == yarn_epoch_waiting;
+  if (old_status == yarn_epoch_waiting) {
+    yarn_word_t old_flag = yarn_readv(&g_rollback_flag);
+    yarn_writev(&g_rollback_flag, YARN_BIT_CLEAR(old_flag, epoch));
+    return true;
+  }
+  else {
+    return false;
+  }
 }
 
 
@@ -383,4 +412,9 @@ void* yarn_epoch_get_data(yarn_word_t epoch) {
 void yarn_epoch_set_data(yarn_word_t epoch, void* data) {
   struct epoch_info* info = get_epoch_info(epoch);
   info->data = data;
+}
+
+
+yarn_word_t yarn_epoch_rollback_flags(void) {
+  return yarn_readv(&g_rollback_flag);
 }
