@@ -381,8 +381,14 @@ bool yarn_epoch_set_executing(yarn_word_t epoch) {
 
   DBG(printf("[%zu] - EXECUTING if WAITING - old_status=%d\n", epoch, old_status));
   if (old_status == yarn_epoch_waiting) {
-    yarn_word_t old_flag = yarn_readv(&g_rollback_flag);
-    yarn_writev(&g_rollback_flag, YARN_BIT_CLEAR(old_flag, epoch));
+
+    yarn_word_t old_flag;
+    yarn_word_t new_flag;
+    do {
+      old_flag = yarn_readv(&g_rollback_flag);
+      new_flag = YARN_BIT_CLEAR(old_flag, epoch);
+    } while(yarn_casv(&g_rollback_flag, old_flag, new_flag) != old_flag);
+
     return true;
   }
   else {
