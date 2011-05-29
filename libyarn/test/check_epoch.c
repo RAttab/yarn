@@ -231,6 +231,7 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
       if (old_status == yarn_epoch_rollback) {
 	// printf("<%zu> - NEXT=%zu -> ROLLBACK\n", pool_id, epoch);
 	waste_time();
+	yarn_epoch_rollback_done(epoch);
       }
       else {
 	// printf("<%zu> - NEXT=%zu\n", pool_id, epoch);

@@ -268,6 +268,15 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
   YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
 }
 
+void yarn_epoch_rollback_done(yarn_word_t epoch) {
+  yarn_word_t old_flag;
+  yarn_word_t new_flag;
+  do {
+    old_flag = yarn_readv(&g_rollback_flag);
+    new_flag = YARN_BIT_CLEAR(old_flag, epoch);
+  } while (yarn_casv(&g_rollback_flag, old_flag, new_flag) != old_flag);
+}
+
 
 bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data) {
   yarn_word_t to_commit;

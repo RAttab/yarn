@@ -17,6 +17,8 @@ era of 30+ core CPUs then this class will need to be updated so that it works be
 #include <types.h>
 
 
+#define YARN_EPOCH_MAX (sizeof(yarn_word_t)*8)
+
 
 enum yarn_epoch_status {
   //! Currently executing.
@@ -58,6 +60,7 @@ Contrary to what the name might suggests, these don't do the actual commits and 
 They only update or prepare the epoch data structures.
 */
 void yarn_epoch_do_rollback(yarn_word_t start);
+void yarn_epoch_rollback_done(yarn_word_t epoch);
 bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data);
 void yarn_epoch_set_commit(yarn_word_t epoch);
 void yarn_epoch_set_done(yarn_word_t epoch);
