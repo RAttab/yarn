@@ -46,13 +46,23 @@ static struct yarn_pstore* g_epoch_store;
 static inline size_t addr_info_size ();
 
 static inline yarn_word_t get_epoch (yarn_word_t pool_id);
-static inline yarn_word_t index_to_epoch_after (yarn_word_t pool_id, yarn_word_t index);
-static inline yarn_word_t index_to_epoch_before (yarn_word_t pool_id, yarn_word_t index);
+static inline yarn_word_t index_to_epoch_after (yarn_word_t base_epoch, 
+						yarn_word_t index);
+static inline yarn_word_t index_to_epoch_before (yarn_word_t base_epoch, 
+						 yarn_word_t index);
 
 static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void* addr);
 static inline void release_map_addr_info (struct addr_info* info);
 
 static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flags);
+
+static inline void store_to_wbuf (struct addr_info* info, yarn_word_t epoch, 
+				  void* src, void* dest, size_t size);
+static inline void load_from_wbuf (struct addr_info* info, yarn_word_t epoch, 
+				   void* src, void* dest, size_t size); 
+
+
+
 
 
 
@@ -150,26 +160,25 @@ void yarn_dep_thread_destroy (yarn_word_t pool_id) {
 
 
 
-bool yarn_dep_store (yarn_word_t pool_id, void* addr, size_t size) {
+bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest, size_t size) {
   // alignment check
   assert(sizeof(yarn_word_t) == 4 ? 
-	 ((uintptr_t)addr & ~3) == (uintptr_t)addr : 
-	 ((uintptr_t)addr & ~7) == (uintptr_t)addr);
+	 ((uintptr_t)src & ~3) == (uintptr_t)src : 
+	 ((uintptr_t)src & ~7) == (uintptr_t)src);
   // we don't support this for the moment.
   assert(size <= sizeof(yarn_word_t));
+  (void) size;
 
   yarn_word_t read_flags;
   const yarn_word_t epoch = get_epoch(pool_id);
-  const yarn_word_t epoch_index = YARN_BIT_INDEX(epoch);
 
   // Buffer the write.
   {
-    struct addr_info* info = acquire_map_addr_info(pool_id, addr);
+    struct addr_info* info = acquire_map_addr_info(pool_id, dest);
     if (!info) goto acquire_error;
 
     read_flags = info->read_flags;
-    info->write_flags = YARN_BIT_SET(info->write_flags, epoch);
-    memcpy(&info->write_buffer[epoch_index], addr, sizeof(size));
+    store_to_wbuf(info, epoch, src, dest, size);
 
     release_map_addr_info(info);
   }
@@ -181,14 +190,34 @@ bool yarn_dep_store (yarn_word_t pool_id, void* addr, size_t size) {
  acquire_error:
   perror(__FUNCTION__);
   return false;
-
 }
 
-bool yarn_dep_load (yarn_word_t pool_id, void* addr, size_t size) {
-  (void) pool_id;
-  (void) addr;
+
+bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest, size_t size) {
+  // alignment check
+  assert(sizeof(yarn_word_t) == 4 ? 
+	 ((uintptr_t)src & ~3) == (uintptr_t)src : 
+	 ((uintptr_t)src & ~7) == (uintptr_t)src);
+  // we don't support this for the moment.
+  assert(size <= sizeof(yarn_word_t));
   (void) size;
-  return 0; //! \todo
+
+  const yarn_word_t epoch = get_epoch(pool_id);
+
+  {
+    struct addr_info* info = acquire_map_addr_info(pool_id, src);
+    if (!info) goto acquire_error;
+
+    load_from_wbuf(info, epoch, src, dest, size);
+
+    release_map_addr_info(info);
+  }
+ 
+  return true;
+  
+ acquire_error:
+  perror(__FUNCTION__);
+  return false;
 }
 
 
@@ -206,8 +235,9 @@ static inline yarn_word_t get_epoch(yarn_word_t pool_id) {
 }
 
 
-static inline yarn_word_t index_to_epoch_after (yarn_word_t pool_id, yarn_word_t index) {
-  const yarn_word_t base_epoch = get_epoch(pool_id);
+static inline yarn_word_t index_to_epoch_after (yarn_word_t base_epoch, 
+						yarn_word_t index) 
+{
   const yarn_word_t base_index = YARN_BIT_INDEX(base_epoch);
   
   if (base_index <= index) {
@@ -219,8 +249,9 @@ static inline yarn_word_t index_to_epoch_after (yarn_word_t pool_id, yarn_word_t
 }
 
 
-static inline yarn_word_t index_to_epoch_before (yarn_word_t pool_id, yarn_word_t index) {
-  const yarn_word_t base_epoch = get_epoch(pool_id);
+static inline yarn_word_t index_to_epoch_before (yarn_word_t base_epoch, 
+						 yarn_word_t index) 
+{
   const yarn_word_t base_index = YARN_BIT_INDEX(base_epoch);
   
   if (base_index >= index) {
@@ -263,6 +294,57 @@ static inline void release_map_addr_info (struct addr_info* info) {
 }
 
 
+
+static inline void store_to_wbuf (struct addr_info* info, 
+				  yarn_word_t epoch, 
+				  void* src, 
+				  void* dest,
+				  size_t size) 
+{
+  (void) dest;
+
+  const yarn_word_t epoch_index = YARN_BIT_INDEX(epoch);
+
+  info->write_flags = YARN_BIT_SET(info->write_flags, epoch);
+
+  memcpy(&info->write_buffer[epoch_index], src, size);
+}
+
+static inline void load_from_wbuf (struct addr_info* info, 
+				   yarn_word_t epoch, 
+				   void* src, 
+				   void* dest, 
+				   size_t size)
+{
+  info->read_flags = YARN_BIT_SET(info->read_flags, epoch);
+
+  const yarn_word_t old_first = yarn_epoch_first();
+
+  const yarn_word_t range_mask = yarn_bit_mask_range(old_first, epoch);
+  const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();
+
+  yarn_word_t write_flags = info->write_flags;
+  write_flags &= range_mask;
+  write_flags &= rollback_mask;
+
+  // Check in wbuf for a value to read.
+  if (write_flags != 0) {
+    const yarn_word_t read_index = yarn_bit_log2(write_flags);
+    const yarn_word_t read_epoch = index_to_epoch_before(epoch, read_index);
+    memcpy(dest, &info->write_buffer[read_index], size);
+
+    const yarn_word_t new_first = yarn_epoch_first();
+    // If the value was comitted while we were reading, go to memory.
+    if (new_first <= read_epoch) {
+      return;
+    }
+  }
+
+  // No values in the buffer, read straight from memory.
+  memcpy(dest, src, size);
+}
+
+
 static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flags) {
 
   const yarn_word_t last_epoch = yarn_epoch_last();
@@ -270,7 +352,7 @@ static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flag
     return;
   }
 
-  const yarn_word_t rollback_mask = yarn_epoch_rollback_flags();  
+  const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();  
   const yarn_word_t range_mask = yarn_bit_mask_range(epoch+1, last_epoch);
   
   read_flags &= range_mask;
