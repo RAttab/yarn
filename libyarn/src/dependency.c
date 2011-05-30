@@ -49,6 +49,10 @@ static struct yarn_pstore* g_epoch_store;
 // Heads for the addr_info linked list of each epoch.
 static struct addr_info* g_info_list[YARN_EPOCH_MAX];
 
+// Quick element access to bypass the hash table.
+static struct addr_info** g_info_index;
+static size_t g_info_index_size;
+
 
 
 // Prototypes
@@ -60,9 +64,13 @@ static inline yarn_word_t index_to_epoch_after (yarn_word_t base_epoch,
 						yarn_word_t index);
 static inline yarn_word_t index_to_epoch_before (yarn_word_t base_epoch, 
 						 yarn_word_t index);
-static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void* addr);
 
-static inline void release_map_addr_info (struct addr_info* info);
+
+static inline void release_addr_info (struct addr_info* info);
+static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void* addr);
+static inline struct addr_info* acquire_index_addr_info (yarn_word_t pool_id,
+							 yarn_word_t index_id,
+							 void* addr);
 
 static inline void info_list_push (yarn_word_t epoch, struct addr_info* info);
 static inline struct addr_info* info_list_pop (yarn_word_t epoch);
@@ -109,7 +117,7 @@ static void addr_info_destruct(void* data) {
 
 
 
-bool yarn_dep_global_init (size_t ws_size) {
+bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size) {
   g_dependency_map = yarn_map_init(ws_size);
   if (!g_dependency_map) goto map_error;
 
@@ -120,13 +128,22 @@ bool yarn_dep_global_init (size_t ws_size) {
 
   g_epoch_store = yarn_pstore_init();
   if (!g_epoch_store) goto epoch_store_error;
-
   for (size_t i = 0; i < YARN_EPOCH_MAX; ++i) {
     g_info_list[i] = NULL;
   }
 
+  g_info_index_size = index_size;
+  g_info_index = (struct addr_info**) malloc(index_size * sizeof(struct addr_info*));
+  if (!g_info_index) goto index_alloc_error;
+  for (yarn_word_t i = 0; i < index_size; ++i) {
+    g_info_index[i] = NULL;
+  }
+
+
   return true;
   
+  free(g_info_index);
+ index_alloc_error:
   yarn_pstore_destroy(g_epoch_store);
  epoch_store_error:
   yarn_pmem_destroy(g_addr_info_alloc);
@@ -154,6 +171,8 @@ void yarn_dep_global_destroy (void) {
   for (size_t i = 0; i < YARN_EPOCH_MAX; ++i) {
     assert(g_info_list[i] == NULL && "Memory leak.");
   }
+
+  free(g_info_index);
 }
 
 
@@ -184,15 +203,15 @@ void yarn_dep_thread_destroy (yarn_word_t pool_id) {
 }
 
 
-
-bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest, size_t size) {
-  // alignment check
+static inline void alignment_check (void* addr) {
   assert(sizeof(yarn_word_t) == 4 ? 
-	 ((uintptr_t)src & ~3) == (uintptr_t)src : 
-	 ((uintptr_t)src & ~7) == (uintptr_t)src);
-  // we don't support this for the moment.
-  assert(size <= sizeof(yarn_word_t));
-  (void) size;
+	 ((uintptr_t)addr & ~3) == (uintptr_t)addr : 
+	 ((uintptr_t)addr & ~7) == (uintptr_t)addr);
+}
+
+
+bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest) {
+  alignment_check(src);
 
   yarn_word_t read_flags;
   const yarn_word_t epoch = get_epoch(pool_id);
@@ -205,7 +224,7 @@ bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest, size_t size) {
     read_flags = info->read_flags;
     store_to_wbuf(info, epoch, src, dest, sizeof(yarn_word_t));
 
-    release_map_addr_info(info);
+    release_addr_info(info);
   }
 
   dep_violation_check (epoch, read_flags);
@@ -218,14 +237,42 @@ bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest, size_t size) {
 }
 
 
-bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest, size_t size) {
-  // alignment check
-  assert(sizeof(yarn_word_t) == 4 ? 
-	 ((uintptr_t)src & ~3) == (uintptr_t)src : 
-	 ((uintptr_t)src & ~7) == (uintptr_t)src);
-  // we don't support this for the moment.
-  assert(size <= sizeof(yarn_word_t));
-  (void) size;
+bool yarn_dep_store_fast (yarn_word_t pool_id, 
+			  yarn_word_t index_id, 
+			  void* src, 
+			  void* dest)
+{
+  alignment_check(src);
+
+  yarn_word_t read_flags;
+  const yarn_word_t epoch = get_epoch(pool_id);
+
+  // Buffer the write.
+  {
+    struct addr_info* info = acquire_index_addr_info(pool_id, index_id, dest);
+    if (!info) goto acquire_error;
+
+    read_flags = info->read_flags;
+    store_to_wbuf(info, epoch, src, dest, sizeof(yarn_word_t));
+
+    release_addr_info(info);
+  }
+
+  dep_violation_check (epoch, read_flags);
+
+  return true;
+
+ acquire_error:
+  perror(__FUNCTION__);
+  return false;
+
+}
+
+
+
+
+bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest) {
+  alignment_check(src);
 
   const yarn_word_t epoch = get_epoch(pool_id);
 
@@ -235,7 +282,7 @@ bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest, size_t size) {
 
     load_from_wbuf(info, epoch, src, dest, sizeof(yarn_word_t));
 
-    release_map_addr_info(info);
+    release_addr_info(info);
   }
  
   return true;
@@ -244,6 +291,34 @@ bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest, size_t size) {
   perror(__FUNCTION__);
   return false;
 }
+
+bool yarn_dep_load_fast (yarn_word_t pool_id, 
+			 yarn_word_t index_id, 
+			 void* src, 
+			 void* dest) 
+{
+  alignment_check(src);
+
+  const yarn_word_t epoch = get_epoch(pool_id);
+
+  {
+    struct addr_info* info = acquire_index_addr_info(pool_id, index_id, src);
+    if (!info) goto acquire_error;
+
+    load_from_wbuf(info, epoch, src, dest, sizeof(yarn_word_t));
+
+    release_addr_info(info);
+  }
+ 
+  return true;
+  
+ acquire_error:
+  perror(__FUNCTION__);
+  return false;
+}
+
+
+
 
 
 void yarn_dep_commit (yarn_word_t pool_id) {
@@ -329,6 +404,33 @@ static inline yarn_word_t index_to_epoch_before (yarn_word_t base_epoch,
 }
 
 
+static inline struct addr_info* acquire_index_addr_info (yarn_word_t pool_id,
+							 yarn_word_t index_id,
+							 void* addr) 
+{
+  assert(index_id < g_info_index_size);
+
+  struct addr_info* info;
+
+  if (g_info_index[index_id] == NULL) {
+    info = acquire_map_addr_info(pool_id, addr);
+    if (!info) goto acquire_error;
+
+    g_info_index[index_id] = info;
+  }
+  else {
+    info = g_info_index[index_id];
+    YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
+  }
+
+  return info;
+
+  // release_addr_info(info);
+ acquire_error:
+  perror(__FUNCTION__);
+  return NULL;
+}
+
 
 static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void* addr) {
 
@@ -366,7 +468,7 @@ static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void
 }
 
 
-static inline void release_map_addr_info (struct addr_info* info) {
+static inline void release_addr_info (struct addr_info* info) {
   YARN_CHECK_RET0(pthread_mutex_unlock(&info->lock));  
 }
 
