@@ -27,6 +27,7 @@ bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest, size_t size);
 bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest, size_t size);
 
 void yarn_dep_commit (yarn_word_t pool_id);
+void yarn_dep_rollback (yarn_word_t pool_id);
 
 
 #endif // YARN_DEPENDENCY_H_
