@@ -18,10 +18,10 @@ START_TEST(t_bits_range_mask) {
   }
 
   {
-    for (size_t i = 0; i < YARN_BIT_SIZE; ++i) {
+    for (size_t i = 0; i < YARN_WORD_BIT_SIZE; ++i) {
       yarn_word_t expected = 0;
 
-      for (size_t j = 0; j < YARN_BIT_SIZE-1; ++j) {
+      for (size_t j = 0; j < YARN_WORD_BIT_SIZE-1; ++j) {
 	size_t k = j + i + 1;
 	expected |= ((yarn_word_t)1) << (YARN_BIT_INDEX(k)-1);
 
@@ -44,7 +44,7 @@ START_TEST(t_bits_log2) {
 
   {
     yarn_word_t word = 0;
-    for (size_t i = 0; i < YARN_BIT_SIZE; ++i) {
+    for (size_t i = 0; i < YARN_WORD_BIT_SIZE; ++i) {
       word = (word << 1) + 1;
 
       yarn_word_t log2 = yarn_bit_log2(word);
@@ -61,12 +61,13 @@ START_TEST(t_bits_trailing_zeros) {
   // We currently don't need to call this with 0 as an input so it's fine for the moment.
   {
     yarn_word_t zeros = yarn_bit_trailing_zeros(0);
-    fail_if(zeros != YARN_BIT_SIZE-1, "zeros=%zu, expected=%zu", zeros, YARN_BIT_SIZE-1);
+    fail_if(zeros != YARN_WORD_BIT_SIZE-1, 
+	    "zeros=%zu, expected=%zu", zeros, YARN_WORD_BIT_SIZE-1);
   }
 
   {
     yarn_word_t word = -1;
-    for (size_t i = 0; i < YARN_BIT_SIZE; ++i) {
+    for (size_t i = 0; i < YARN_WORD_BIT_SIZE; ++i) {
 
       yarn_word_t zeros = yarn_bit_trailing_zeros(word);
       fail_if(zeros != i, 
@@ -82,7 +83,7 @@ END_TEST
 Suite* yarn_bits_suite (void) {
   Suite* s = suite_create("yarn_bits");
 
-#ifdef YARN_BIT_64
+#ifdef YARN_WORD_64
   printf("yarn_bits -> Running 64 bits tests.\n");
 #else
   printf("yarn_bits -> Running 32 bits tests.\n");

@@ -15,15 +15,7 @@ an appropriate size.
 
 #include <types.h>
 
-#if (YARN_WORD_MAX == UINT64_MAX)
-#  define YARN_BIT_64
-#else
-#  undef YARN_BIT_64
-#endif
-
-#define YARN_BIT_SIZE (sizeof(yarn_word_t)*8)
-
-#define YARN_BIT_INDEX(value) ((value) % YARN_BIT_SIZE)
+#define YARN_BIT_INDEX(value) ((value) % YARN_WORD_BIT_SIZE)
 #define YARN_BIT_MASK(index) (((yarn_word_t)1) << YARN_BIT_INDEX(index))
 #define YARN_BIT_SET(word,index) ((word) | YARN_BIT_MASK(index))
 #define YARN_BIT_CLEAR(word,index) ((word) & ~YARN_BIT_MASK(index))
@@ -59,7 +51,7 @@ inline yarn_word_t yarn_bit_log2 (yarn_word_t v) {
 
   register yarn_word_t t, tt; // temporaries
 
-#ifdef YARN_BIT_64
+#ifdef YARN_WORD_64
 
   tt = v >> 48;
   if (tt) {
@@ -71,7 +63,7 @@ inline yarn_word_t yarn_bit_log2 (yarn_word_t v) {
     return (t = tt >> 8) ? 40 + log_tables_256[t] : 32 + log_tables_256[tt];
   }
 
-#endif // YARN_BIT_64
+#endif // YARN_WORD_64
 
   tt = v >> 16;
   if (tt) {
@@ -91,7 +83,7 @@ Original taken from the Stanford Bit Twidling hacks page and extended for 64 bit
 http://www-graphics.stanford.edu/~seander/bithacks.html#ZerosOnRightBinSearch
 */
 inline yarn_word_t yarn_bit_trailing_zeros (yarn_word_t v) {
-  // NOTE: if 0 == v, then c = YARN_BIT_SIZE-1.
+  // NOTE: if 0 == v, then c = YARN_WORD_BIT_SIZE-1.
   if (v & 0x1) {
     // special case for odd v (assumed to happen half of the time)
     return 0;
@@ -100,14 +92,14 @@ inline yarn_word_t yarn_bit_trailing_zeros (yarn_word_t v) {
   else {
     yarn_word_t c = 1;
 
-#ifdef YARN_BIT_64
+#ifdef YARN_WORD_64
 
     if ((v & 0xffffffff) == 0) {
       v >>= 32;
       c += 32;
     }
 
-#endif // YARN_BIT_64
+#endif // YARN_WORD_64
 
     if ((v & 0xffff) == 0) {  
       v >>= 16;  
