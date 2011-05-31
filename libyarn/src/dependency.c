@@ -67,10 +67,11 @@ static inline yarn_word_t index_to_epoch_before (yarn_word_t base_epoch,
 
 
 static inline void release_addr_info (struct addr_info* info);
-static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void* addr);
+static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, 
+						       const void* addr);
 static inline struct addr_info* acquire_index_addr_info (yarn_word_t pool_id,
 							 yarn_word_t index_id,
-							 void* addr);
+							 const void* addr);
 
 static inline void info_list_push (yarn_word_t epoch, struct addr_info* info);
 static inline struct addr_info* info_list_pop (yarn_word_t epoch);
@@ -78,9 +79,9 @@ static inline struct addr_info* info_list_pop (yarn_word_t epoch);
 static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flags);
 
 static inline void store_to_wbuf (struct addr_info* info, yarn_word_t epoch, 
-				  void* src, void* dest, size_t size);
+				  const void* src, void* dest, size_t size);
 static inline void load_from_wbuf (struct addr_info* info, yarn_word_t epoch, 
-				   void* src, void* dest, size_t size); 
+				   const void* src, void* dest, size_t size); 
 
 
 
@@ -203,14 +204,14 @@ void yarn_dep_thread_destroy (yarn_word_t pool_id) {
 }
 
 
-static inline void alignment_check (void* addr) {
+static inline void alignment_check (const void* addr) {
   assert(sizeof(yarn_word_t) == 4 ? 
 	 ((uintptr_t)addr & ~3) == (uintptr_t)addr : 
 	 ((uintptr_t)addr & ~7) == (uintptr_t)addr);
 }
 
 
-bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest) {
+bool yarn_dep_store (yarn_word_t pool_id, const void* src, void* dest) {
   alignment_check(src);
 
   yarn_word_t read_flags;
@@ -239,7 +240,7 @@ bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest) {
 
 bool yarn_dep_store_fast (yarn_word_t pool_id, 
 			  yarn_word_t index_id, 
-			  void* src, 
+			  const void* src, 
 			  void* dest)
 {
   alignment_check(src);
@@ -271,7 +272,7 @@ bool yarn_dep_store_fast (yarn_word_t pool_id,
 
 
 
-bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest) {
+bool yarn_dep_load (yarn_word_t pool_id, const void* src, void* dest) {
   alignment_check(src);
 
   const yarn_word_t epoch = get_epoch(pool_id);
@@ -294,7 +295,7 @@ bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest) {
 
 bool yarn_dep_load_fast (yarn_word_t pool_id, 
 			 yarn_word_t index_id, 
-			 void* src, 
+			 const void* src, 
 			 void* dest) 
 {
   alignment_check(src);
@@ -406,7 +407,7 @@ static inline yarn_word_t index_to_epoch_before (yarn_word_t base_epoch,
 
 static inline struct addr_info* acquire_index_addr_info (yarn_word_t pool_id,
 							 yarn_word_t index_id,
-							 void* addr) 
+							 const void* addr) 
 {
   assert(index_id < g_info_index_size);
 
@@ -432,8 +433,9 @@ static inline struct addr_info* acquire_index_addr_info (yarn_word_t pool_id,
 }
 
 
-static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void* addr) {
-
+static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, 
+						       const void* addr) 
+{
   struct addr_info* tmp_info = yarn_pmem_alloc(g_addr_info_alloc, pool_id);
   if (!tmp_info) goto alloc_error;
 
@@ -443,7 +445,7 @@ static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id, void
   
   struct addr_info* info = (struct addr_info*) 
       yarn_map_probe(g_dependency_map, (uintptr_t)addr, tmp_info);
-  info->addr = addr;
+  info->addr = (void*) addr; //! \todo It's either this or remove all const qualifiers...
   
   if (info != tmp_info) {
     YARN_CHECK_RET0(pthread_mutex_unlock(&tmp_info->lock));
@@ -497,7 +499,7 @@ static inline struct addr_info* info_list_pop (yarn_word_t epoch) {
 
 static inline void store_to_wbuf (struct addr_info* info, 
 				  yarn_word_t epoch, 
-				  void* src, 
+				  const void* src, 
 				  void* dest,
 				  size_t size) 
 {
@@ -510,34 +512,47 @@ static inline void store_to_wbuf (struct addr_info* info,
 
 static inline void load_from_wbuf (struct addr_info* info, 
 				   yarn_word_t epoch, 
-				   void* src, 
+				   const void* src, 
 				   void* dest, 
 				   size_t size)
 {
   info->read_flags = YARN_BIT_SET(info->read_flags, epoch);
+  yarn_word_t write_flags = info->write_flags;
+
+  // We could release the lock here.
+  //  This would lessen the chance of failing to lock but requires some extra checking.
 
   const yarn_word_t old_first = yarn_epoch_first();
 
   const yarn_word_t range_mask = yarn_bit_mask_range(old_first, epoch);
   const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();
 
-  yarn_word_t write_flags = info->write_flags;
   write_flags &= range_mask;
   write_flags &= rollback_mask;
 
   // Check in wbuf for a value to read.
   if (write_flags != 0) {
     const yarn_word_t read_index = yarn_bit_log2(write_flags);
-    const yarn_word_t read_epoch = index_to_epoch_before(epoch, read_index);
+
+    // See below for why it's commented out.
+    // const yarn_word_t read_epoch = index_to_epoch_before(epoch, read_index);
+
     memcpy(dest, &info->write_buffer[read_index], size);
+
+    return;
+
+    /* This part is unecessary since we own the lock on the object. 
+       Use this only if we decide to release the lock before performing the load.
 
     const yarn_word_t new_first = yarn_epoch_first();
     // If the value was comitted while we were reading, go to memory.
     if (yarn_timestamp_comp(new_first, read_epoch) <= 0) {
       return;
     }
-  }
 
+    */
+  }
+  
   // No values in the buffer, read straight from memory.
   memcpy(dest, src, size);
 }

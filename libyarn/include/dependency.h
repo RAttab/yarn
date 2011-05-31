@@ -23,16 +23,16 @@ void yarn_dep_thread_destroy (yarn_word_t pool_id);
 bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size);
 void yarn_dep_global_destroy (void);
 
-bool yarn_dep_store (yarn_word_t pool_id, void* src, void* dest);
+bool yarn_dep_store (yarn_word_t pool_id, const void* src, void* dest);
 bool yarn_dep_store_fast (yarn_word_t pool_id, 
 			  yarn_word_t index_id, 
-			  void* src, 
+			  const void* src, 
 			  void* dest);
 
-bool yarn_dep_load (yarn_word_t pool_id, void* src, void* dest);
+bool yarn_dep_load (yarn_word_t pool_id, const void* src, void* dest);
 bool yarn_dep_load_fast (yarn_word_t pool_id, 
 			 yarn_word_t index_id, 
-			 void* src, 
+			 const void* src, 
 			 void* dest);
 
 void yarn_dep_commit (yarn_word_t pool_id);
