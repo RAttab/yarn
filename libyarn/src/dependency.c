@@ -560,7 +560,7 @@ static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flag
     return;
   }
 
-  yarn_word_t rollback_index = yarn_bit_trailing_zeros(read_flags)+1;
+  yarn_word_t rollback_index = yarn_bit_trailing_zeros(read_flags);
   yarn_word_t rollback_epoch = index_to_epoch_after(epoch, rollback_index);
   yarn_epoch_do_rollback(rollback_epoch);
 
