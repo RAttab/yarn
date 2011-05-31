@@ -6,6 +6,8 @@
 
 #include "check_libyarn.h"
 
+#include "t_utils.h"
+
 #include <types.h>
 #include <epoch.h>
 #include <tpool.h>
@@ -26,34 +28,6 @@ static void t_epoch_teardown(void) {
 
 
 
-static inline void check_status(enum yarn_epoch_status status, 
-				enum yarn_epoch_status expected) 
-{
-  fail_if(status != expected, "status=%d, expected=%d", status, expected);
-}  
-
-static inline void check_epoch_status(yarn_word_t epoch, 
-				      enum yarn_epoch_status expected) 
-{
-  enum yarn_epoch_status status = yarn_epoch_get_status(epoch);
-  check_status(status,expected);
-}
-
-static inline void set_epoch_data(yarn_word_t epoch, void* value) {
-  yarn_epoch_set_data(epoch, value);
-  yarn_epoch_set_task(epoch, value);
-}
-
-static inline void check_data(void* data, void* task, void* expected) {
-  fail_if(data != expected, "data=%p, expected=%p", data, expected);
-  fail_if(task != expected, "task=%p, expected=%p", task, expected);
-}
-
-static inline void check_epoch_data(yarn_word_t epoch, void* expected) {
-  void* data = yarn_epoch_get_data(epoch);
-  void* task = (void*) yarn_epoch_get_task(epoch);
-  check_data(data, task, expected);
-}
 
 
 
@@ -65,8 +39,8 @@ START_TEST(t_epoch_next) {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
     fail_if(next_epoch != i, "next_epoch=%zu, i=%zu", next_epoch, i);
-    check_epoch_status(next_epoch, yarn_epoch_executing);
-    check_status(old_status, yarn_epoch_commit);
+    t_yarn_check_epoch_status(next_epoch, yarn_epoch_executing);
+    t_yarn_check_status(old_status, yarn_epoch_commit);
   }
 }
 END_TEST
@@ -77,15 +51,15 @@ START_TEST(t_epoch_rollback_executing) {
   
   enum yarn_epoch_status old_status;
   yarn_word_t epoch = yarn_epoch_next(&old_status);
-  set_epoch_data(epoch, VALUE);
+  t_yarn_set_epoch_data(epoch, VALUE);
   
   yarn_epoch_do_rollback(epoch);
-  check_epoch_status(epoch, yarn_epoch_pending_rollback);
-  check_epoch_data(epoch, VALUE);
+  t_yarn_check_epoch_status(epoch, yarn_epoch_pending_rollback);
+  t_yarn_check_epoch_data(epoch, VALUE);
   
   yarn_epoch_set_done(epoch);
-  check_epoch_status(epoch, yarn_epoch_rollback);
-  check_epoch_data(epoch, VALUE);
+  t_yarn_check_epoch_status(epoch, yarn_epoch_rollback);
+  t_yarn_check_epoch_data(epoch, VALUE);
 }
 END_TEST
 
@@ -94,15 +68,15 @@ START_TEST(t_epoch_rollback_done) {
 
   enum yarn_epoch_status old_status;
   yarn_word_t epoch = yarn_epoch_next(&old_status);
-  set_epoch_data(epoch, VALUE);
+  t_yarn_set_epoch_data(epoch, VALUE);
   
   yarn_epoch_set_done(epoch);
-  check_epoch_status(epoch, yarn_epoch_done);
-  check_epoch_data(epoch, VALUE);
+  t_yarn_check_epoch_status(epoch, yarn_epoch_done);
+  t_yarn_check_epoch_data(epoch, VALUE);
 
   yarn_epoch_do_rollback(epoch);
-  check_epoch_status(epoch, yarn_epoch_rollback);
-  check_epoch_data(epoch, VALUE);
+  t_yarn_check_epoch_status(epoch, yarn_epoch_rollback);
+  t_yarn_check_epoch_data(epoch, VALUE);
 }
 END_TEST
 
@@ -112,15 +86,15 @@ START_TEST(t_epoch_rollback_range) {
   for (int i = 0; i < 8; ++i) {
     enum yarn_epoch_status old_status;
     yarn_word_t epoch = yarn_epoch_next(&old_status);
-    set_epoch_data(epoch, VALUE);
+    t_yarn_set_epoch_data(epoch, VALUE);
     yarn_epoch_set_done(epoch);
   }
 
   yarn_epoch_do_rollback(4);
 
   for (yarn_word_t epoch = 0; epoch < 4; ++epoch) {
-    check_epoch_status(epoch, yarn_epoch_done);
-    check_epoch_data(epoch, VALUE);
+    t_yarn_check_epoch_status(epoch, yarn_epoch_done);
+    t_yarn_check_epoch_data(epoch, VALUE);
   }
 
   for (yarn_word_t epoch = 4; epoch < 8; ++epoch) {
@@ -128,16 +102,16 @@ START_TEST(t_epoch_rollback_range) {
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
     
     fail_if(next_epoch != epoch, "next_epoch=%zu, expected=%zu", next_epoch, epoch);
-    check_epoch_status(epoch, yarn_epoch_executing);
-    check_status(old_status, yarn_epoch_rollback);
-    check_epoch_data(epoch, VALUE);
+    t_yarn_check_epoch_status(epoch, yarn_epoch_executing);
+    t_yarn_check_status(old_status, yarn_epoch_rollback);
+    t_yarn_check_epoch_data(epoch, VALUE);
   }
 
   for (int i = 0; i < 8; ++i) {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
-    check_epoch_status(next_epoch, yarn_epoch_executing);
-    check_status(old_status, yarn_epoch_commit);
+    t_yarn_check_epoch_status(next_epoch, yarn_epoch_executing);
+    t_yarn_check_status(old_status, yarn_epoch_commit);
   }
 
 }
@@ -158,7 +132,7 @@ START_TEST(t_epoch_commit) {
   {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch = yarn_epoch_next(&old_status);
-    set_epoch_data(next_epoch, VALUE);
+    t_yarn_set_epoch_data(next_epoch, VALUE);
 
     bool ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
     fail_if(ret);
@@ -167,7 +141,7 @@ START_TEST(t_epoch_commit) {
 
     ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
     fail_if(!ret);
-    check_data(task, data, VALUE);
+    t_yarn_check_data(task, data, VALUE);
     yarn_epoch_set_commit(epoch_to_commit);
   }
 
@@ -176,19 +150,19 @@ START_TEST(t_epoch_commit) {
     for (int i = 0; i < IT_COUNT; ++i) {
       enum yarn_epoch_status old_status;
       yarn_word_t next_epoch = yarn_epoch_next(&old_status);
-      set_epoch_data(next_epoch, VALUE);
+      t_yarn_set_epoch_data(next_epoch, VALUE);
       yarn_epoch_set_done(next_epoch);
 
-      check_epoch_status(next_epoch, yarn_epoch_done);
-      check_epoch_data(next_epoch, VALUE);
+      t_yarn_check_epoch_status(next_epoch, yarn_epoch_done);
+      t_yarn_check_epoch_data(next_epoch, VALUE);
     }
 
     for (int i = 0; i < IT_COUNT; ++i) {
       bool ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
 
       fail_if(!ret);
-      check_data(task, data, VALUE);
-      check_epoch_status(epoch_to_commit, yarn_epoch_done);
+      t_yarn_check_data(task, data, VALUE);
+      t_yarn_check_epoch_status(epoch_to_commit, yarn_epoch_done);
 
       yarn_epoch_set_commit(epoch_to_commit);
     }
