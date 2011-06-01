@@ -106,7 +106,15 @@ struct yarn_map* yarn_map_init (size_t capacity) {
 
 
 //! \todo Make sure we get something to clean up the values. Probably a fct ptr.
-void yarn_map_destroy (struct yarn_map* m) {
+void yarn_map_destroy (struct yarn_map* m, yarn_map_destructor d) {
+
+  for (size_t i = 0; i < m->capacity; ++i) {
+    if (yarn_readp(&m->table[i].addr) != NULL) {
+      d(yarn_readp(&m->table[i].value));
+      yarn_writep(&m->table[i].addr, NULL);
+    }
+  }
+
   free(m->table);
   free(m);
 }

@@ -23,12 +23,17 @@ Tests for the concurrent hash map.
 // Fixture.
 struct yarn_map* f_map;
 
+static void t_map_item_destruct (void* data) {
+  (void) data;
+  // We don't malloc anything in these tests so no destruction needed.
+}
+
 static void t_map_basic_setup (void) {
   f_map = yarn_map_init(0);
 }
 
 static void t_map_basic_teardown (void) {
-  yarn_map_destroy(f_map);
+  yarn_map_destroy(f_map, t_map_item_destruct);
   f_map = NULL;
 }
 

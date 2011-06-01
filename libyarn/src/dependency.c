@@ -118,6 +118,11 @@ static void addr_info_destruct(void* data) {
   pthread_mutex_destroy(&info->lock);
 }
 
+static void map_item_destruct (void* data) {
+  addr_info_destruct(data);
+  free(data);
+}
+
 
 
 
@@ -152,14 +157,14 @@ bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size) {
  epoch_store_error:
   yarn_pmem_destroy(g_addr_info_alloc);
  allocator_error:
-  yarn_map_destroy(g_dependency_map);
+  yarn_map_destroy(g_dependency_map, map_item_destruct);
  map_error:
   perror(__FUNCTION__);
   return false;
 }
 
 void yarn_dep_global_destroy (void) {
-  yarn_map_destroy(g_dependency_map);
+  yarn_map_destroy(g_dependency_map, map_item_destruct);
   yarn_pmem_destroy(g_addr_info_alloc);
 
   for (yarn_word_t pool_id = 0; pool_id < yarn_tpool_size(); ++pool_id) {

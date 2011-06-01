@@ -22,8 +22,11 @@ struct yarn_map;
 //! Initializes a new map object.
 struct yarn_map* yarn_map_init (size_t capacity);
 
+
+typedef void (*yarn_map_destructor) (void*);
+
 //! Frees a map object.
-void yarn_map_destroy (struct yarn_map* m); 
+void yarn_map_destroy (struct yarn_map* m, yarn_map_destructor d); 
 
 /*!
 Looks for the given address and returns the value if present. Otherwise it adds the 
