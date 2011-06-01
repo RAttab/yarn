@@ -12,16 +12,21 @@ error messages of the fail_xxx macros.
 #define YARN_T_UTILS_H_
 
 
+#include <helper.h>
 #include <bits.h>
 
 
 // Testing values that is adjusted based on the machine's word size.
 #ifdef YARN_WORD_64
-#  define YARN_T_VALUE_1 0xAAAAAAAAAAAAAAAA
-#  define YARN_T_VALUE_2 0x5555555555555555
+#  define YARN_T_VALUE_1 0xAAAAAAAAAAAAAAAA // 1010
+#  define YARN_T_VALUE_2 0x5555555555555555 // 0101
+#  define YARN_T_VALUE_3 0x9999999999999999 // 1001
+#  define YARN_T_VALUE_4 0x6666666666666666 // 0110
 #else
 #  define YARN_T_VALUE_1 0xAAAAAAAA
 #  define YARN_T_VALUE_2 0x55555555
+#  define YARN_T_VALUE_3 0x99999999
+#  define YARN_T_VALUE_4 0x66666666
 #endif
 
 
@@ -68,40 +73,48 @@ error messages of the fail_xxx macros.
 #define t_yarn_check_dep_load(pool_id, src, expected)			\
   do {									\
     yarn_word_t dest = 0;						\
-    yarn_dep_load((pool_id), (void*)(src), (void*)(&dest));		\
+    bool ret = yarn_dep_load((pool_id), (void*)(src), (void*)(&dest));	\
+    fail_if(!ret);							\
     fail_if (dest != (expected),					\
-	     "LOAD -> pid=%zu, src=%zu, dest=%zu, expected=%zu",	\
-	     (pool_id), *(src), dest, (expected));			\
+	     "LOAD -> pid=%zu, src="YARN_SHEX", dest="YARN_SHEX		\
+	     ", expected="YARN_SHEX,					\
+	     (pool_id), YARN_AHEX(*(src)), YARN_AHEX(dest),		\
+	     YARN_AHEX((expected)));					\
   } while(false)
 
 #define t_yarn_check_dep_load_fast(pool_id, index, src, expected)	\
   do {									\
     yarn_word_t dest = 0;						\
-    yarn_dep_load_fast((pool_id), (index), (void*)(src), (void*)(&dest)); \
+    bool ret = yarn_dep_load_fast((pool_id), (index), (void*)(src), (void*)(&dest)); \
+    fail_if(!ret);							\
     fail_if (dest != (expected),					\
-	     "LOAD_F -> pid=%zu, src=%zu, dest=%zu, expected=%zu",	\
-	     (pool_id), *(src), dest, (expected));			\
+	     "LOAD_F -> pid=%zu, src="YARN_SHEX", dest="YARN_SHEX	\
+	     ", expected="YARN_SHEX,					\
+	     (pool_id), YARN_AHEX(*(src)), YARN_AHEX(dest),		\
+	     YARN_AHEX(expected));					\
   } while(false)
-
 
 
 #define t_yarn_check_dep_store(pool_id, dest, expected)			\
   do {									\
     const yarn_word_t src = expected;					\
-    yarn_dep_store((pool_id), (void*)(&src), (void*)(dest));		\
-    fail_if (*(dest) != (expected),					\
-	     "STORE -> pid=%zu, src=%zu, dest=%zu, expected=%zu",	\
-	     (pool_id), src, (dest), (expected));			\
+    bool ret = yarn_dep_store((pool_id), (void*)(&src), (void*)(dest));	\
+    fail_if (!ret);							\
   } while (false)
 
 #define t_yarn_check_dep_store_fast(pool_id, index, dest, expected)	\
   do {									\
     const yarn_word_t src = expected;					\
-    yarn_dep_store_fast((pool_id), index, (void*)(&src), (void*)(dest)); \
-    fail_if (*(dest) != (expected),					\
-	     "STORE_F -> pid=%zu, src=%zu, dest=%zu, expected=%zu",	\
-	     (pool_id), src, (dest), (expected));			\
+    bool ret = yarn_dep_store_fast((pool_id), index, (void*)(&src), (void*)(dest)); \
+    fail_if(!ret);							\
   } while (false)
 
+
+#define t_yarn_check_dep_mem(pool_id, mem, expected, prefix)		\
+  do {									\
+    fail_if ((mem) != (expected),					\
+	     "%s -> pid=%zu, mem="YARN_SHEX", expected="YARN_SHEX,	\
+	     (prefix), (pool_id), YARN_AHEX(mem), YARN_AHEX(expected));	\
+  } while (false)
 
 #endif

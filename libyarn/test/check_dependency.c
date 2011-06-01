@@ -22,14 +22,14 @@ static void t_dep_base_setup(void) {
   bool ret;
   
   ret = yarn_tpool_init();
-  assert(!ret);
+  assert(ret);
 
   ret = yarn_epoch_init();
-  assert(!ret);
+  assert(ret);
 
   g_index_size = 10;
   ret = yarn_dep_global_init(100, g_index_size);
-  assert(!ret);  
+  assert(ret);  
 }
 
 static void t_dep_base_teardown(void) {
@@ -82,6 +82,12 @@ static void t_dep_seq_setup(void) {
 }
 
 static void t_dep_seq_teardown(void) {
+
+  yarn_dep_rollback(f_seq.pid_1);
+  yarn_dep_rollback(f_seq.pid_2);
+  yarn_dep_rollback(f_seq.pid_3);
+  yarn_dep_rollback(f_seq.pid_4);
+
   yarn_dep_thread_destroy(f_seq.pid_1);
   yarn_dep_thread_destroy(f_seq.pid_2);
   yarn_dep_thread_destroy(f_seq.pid_3);
@@ -97,8 +103,14 @@ START_TEST(t_dep_seq_load_store) {
 
   t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_1);
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_1);
+  t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_1);
 
   t_yarn_check_dep_store(f_seq.pid_3, &mem, YARN_T_VALUE_2);
+
+  t_yarn_check_epoch_status(f_seq.epoch_1, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_2, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_3, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_4, yarn_epoch_executing);
 
   t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_1);
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_1);
@@ -112,23 +124,121 @@ START_TEST(t_dep_seq_load_store) {
   t_yarn_check_epoch_status(f_seq.epoch_3, yarn_epoch_pending_rollback);
   t_yarn_check_epoch_status(f_seq.epoch_4, yarn_epoch_pending_rollback);
 
+  t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_1);
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_1);
+
 }
 END_TEST
 
-
+// A close mirror of seq_load_store. Should keep both in sync.
 START_TEST(t_dep_seq_load_store_fast) {
+  {
+    yarn_word_t mem = YARN_T_VALUE_1;
 
+    t_yarn_check_dep_load_fast(f_seq.pid_1, 0, &mem, YARN_T_VALUE_1);
+    t_yarn_check_dep_load_fast(f_seq.pid_1, 0, &mem, YARN_T_VALUE_1);
+
+    t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_1);
+    t_yarn_check_dep_store(f_seq.pid_1, &mem, YARN_T_VALUE_2);
+ 
+    t_yarn_check_dep_load_fast(f_seq.pid_2, 0, &mem, YARN_T_VALUE_2);
+    t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
+  }
+
+  {
+    yarn_word_t mem = YARN_T_VALUE_3;
+    
+    t_yarn_check_dep_store_fast(f_seq.pid_1, 1, &mem, YARN_T_VALUE_4);
+    t_yarn_check_dep_load_fast(f_seq.pid_1, 1, &mem, YARN_T_VALUE_4);
+
+    t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_4);
+    t_yarn_check_dep_store(f_seq.pid_1, &mem, YARN_T_VALUE_1);
+    
+    t_yarn_check_dep_load_fast(f_seq.pid_2, 1, &mem, YARN_T_VALUE_1);
+    t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_1);
+  }
 }
 END_TEST
 
 START_TEST(t_dep_seq_commit) {
+  yarn_word_t mem_1 = 0;
+  yarn_word_t mem_2 = 0;
+  yarn_word_t mem_3 = 0;
+  yarn_word_t mem_4 = 0;
+
+  t_yarn_check_dep_store(f_seq.pid_1, &mem_1, YARN_T_VALUE_1);
+  t_yarn_check_dep_store(f_seq.pid_1, &mem_2, YARN_T_VALUE_1);
+
+  t_yarn_check_dep_store(f_seq.pid_2, &mem_1, YARN_T_VALUE_2);
+  t_yarn_check_dep_store(f_seq.pid_2, &mem_3, YARN_T_VALUE_2);
+
+  t_yarn_check_dep_store(f_seq.pid_3, &mem_1, YARN_T_VALUE_3);
+  t_yarn_check_dep_store(f_seq.pid_3, &mem_3, YARN_T_VALUE_3);
+  t_yarn_check_dep_store(f_seq.pid_3, &mem_2, YARN_T_VALUE_3);
+  t_yarn_check_dep_store(f_seq.pid_3, &mem_4, YARN_T_VALUE_3);
+
+  t_yarn_check_dep_load(f_seq.pid_4, &mem_1, YARN_T_VALUE_3);
+  t_yarn_check_dep_store(f_seq.pid_4, &mem_4, YARN_T_VALUE_4);
+  t_yarn_check_dep_load(f_seq.pid_4, &mem_3, YARN_T_VALUE_3);
+  t_yarn_check_dep_load(f_seq.pid_4, &mem_2, YARN_T_VALUE_3);
+
+
+  yarn_dep_commit(f_seq.pid_2);
+  t_yarn_check_dep_mem(f_seq.pid_2, mem_1, YARN_T_VALUE_2, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_2, mem_2, 0, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_2, mem_3, YARN_T_VALUE_2, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_2, mem_4, 0, "COMMIT");
+
+  yarn_dep_commit(f_seq.pid_1);
+  t_yarn_check_dep_mem(f_seq.pid_1, mem_1, YARN_T_VALUE_2, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_1, mem_2, YARN_T_VALUE_1, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_1, mem_3, YARN_T_VALUE_2, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_1, mem_4, 0, "COMMIT");
+
+  yarn_dep_commit(f_seq.pid_4);
+  t_yarn_check_dep_mem(f_seq.pid_4, mem_1, YARN_T_VALUE_2, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_4, mem_2, YARN_T_VALUE_1, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_4, mem_3, YARN_T_VALUE_2, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_4, mem_4, YARN_T_VALUE_4, "COMMIT");
+
+  yarn_dep_commit(f_seq.pid_3);
+  t_yarn_check_dep_mem(f_seq.pid_3, mem_1, YARN_T_VALUE_3, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_3, mem_2, YARN_T_VALUE_3, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_3, mem_3, YARN_T_VALUE_3, "COMMIT");
+  t_yarn_check_dep_mem(f_seq.pid_3, mem_4, YARN_T_VALUE_4, "COMMIT");
 
 }
 END_TEST
 
-START_TEST(t_dep_seq_rollback) {
+START_TEST(t_dep_seq_rollback) {  
 
+  yarn_word_t mem = YARN_T_VALUE_1;
+
+  t_yarn_check_dep_store(f_seq.pid_1, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_store(f_seq.pid_3, &mem, YARN_T_VALUE_3);
+  t_yarn_check_dep_load(f_seq.pid_4, &mem, YARN_T_VALUE_3);
+
+  yarn_dep_rollback(f_seq.pid_3);
+
+  t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_2);
+
+  yarn_dep_rollback(f_seq.pid_4);
+
+  t_yarn_check_dep_store(f_seq.pid_3, &mem, YARN_T_VALUE_4);
+
+  t_yarn_check_epoch_status(f_seq.epoch_1, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_2, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_3, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_4, yarn_epoch_executing);
+
+  t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_4);
+  t_yarn_check_dep_load(f_seq.pid_4, &mem, YARN_T_VALUE_4);
+  
 }
 END_TEST
 

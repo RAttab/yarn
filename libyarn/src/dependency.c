@@ -83,6 +83,8 @@ static inline void store_to_wbuf (struct addr_info* info, yarn_word_t epoch,
 static inline void load_from_wbuf (struct addr_info* info, yarn_word_t epoch, 
 				   const void* src, void* dest, size_t size); 
 
+static inline void alignment_check (const void* addr);
+static inline void dump_info(struct addr_info* info);
 
 
 
@@ -92,14 +94,16 @@ static bool addr_info_construct(void* data) {
   struct addr_info* info = (struct addr_info*) data;
 
   int ret = pthread_mutex_init(&info->lock, NULL);
-  if (!ret) goto mutex_error;
+  if (ret) goto mutex_error;
 
   info->info_list = (struct addr_info**) (info->write_buffer + YARN_EPOCH_MAX);
   for (size_t i = 0; i < YARN_EPOCH_MAX; ++i) {
     info->info_list[i] = NULL;
   }
 
-  info->last_commit = 0;
+  info->last_commit = -1;
+  info->write_flags = 0;
+  info->read_flags = 0;
 
   return true;
 
@@ -112,7 +116,6 @@ static bool addr_info_construct(void* data) {
 static void addr_info_destruct(void* data) {
   struct addr_info* info = (struct addr_info*) data;
   pthread_mutex_destroy(&info->lock);
-  free(info->write_buffer);
 }
 
 
@@ -170,7 +173,7 @@ void yarn_dep_global_destroy (void) {
   yarn_pstore_destroy(g_epoch_store);
 
   for (size_t i = 0; i < YARN_EPOCH_MAX; ++i) {
-    assert(g_info_list[i] == NULL && "Memory leak.");
+    assert(g_info_list[i] == NULL);
   }
 
   free(g_info_index);
@@ -203,12 +206,6 @@ void yarn_dep_thread_destroy (yarn_word_t pool_id) {
   // g_epoch_store free is handled by global_destroy.
 }
 
-
-static inline void alignment_check (const void* addr) {
-  assert(sizeof(yarn_word_t) == 4 ? 
-	 ((uintptr_t)addr & ~3) == (uintptr_t)addr : 
-	 ((uintptr_t)addr & ~7) == (uintptr_t)addr);
-}
 
 
 bool yarn_dep_store (yarn_word_t pool_id, const void* src, void* dest) {
@@ -330,7 +327,7 @@ void yarn_dep_commit (yarn_word_t pool_id) {
   struct addr_info* info;
   while ((info = info_list_pop(epoch)) != NULL) {
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
-    
+
     // Write the value to memory only if no newer value was written.
     if ((info->write_flags & epoch_mask) && 
 	yarn_timestamp_comp(epoch, info->last_commit) > 0) 
@@ -350,11 +347,11 @@ void yarn_dep_commit (yarn_word_t pool_id) {
 
 void yarn_dep_rollback (yarn_word_t pool_id) {
   const yarn_word_t epoch = get_epoch(pool_id);
-  
-  struct addr_info* info;
-  while ((info = info_list_pop(epoch)) != NULL) {
-    YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
 
+  struct addr_info* info;
+  while ((info = info_list_pop(epoch)) != NULL) {    
+    YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
+    
     info->write_flags = YARN_BIT_CLEAR(info->write_flags, epoch);
     info->read_flags = YARN_BIT_CLEAR(info->read_flags, epoch);    
 
@@ -445,7 +442,7 @@ static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id,
   
   struct addr_info* info = (struct addr_info*) 
       yarn_map_probe(g_dependency_map, (uintptr_t)addr, tmp_info);
-  info->addr = (void*) addr; //! \todo It's either this or remove all const qualifiers...
+  info->addr = (void*) addr; //! \todo It's either this or remove all const qualifiers.
   
   if (info != tmp_info) {
     YARN_CHECK_RET0(pthread_mutex_unlock(&tmp_info->lock));
@@ -488,6 +485,10 @@ static inline struct addr_info* info_list_pop (yarn_word_t epoch) {
   const yarn_word_t index = YARN_BIT_INDEX(epoch);
   struct addr_info* head = g_info_list[index];
 
+  if (head == NULL) {
+    return NULL;
+  }
+
   g_info_list[index] = head->info_list[index];
   head->info_list[index] = NULL;
 
@@ -524,7 +525,7 @@ static inline void load_from_wbuf (struct addr_info* info,
 
   const yarn_word_t old_first = yarn_epoch_first();
 
-  const yarn_word_t range_mask = yarn_bit_mask_range(old_first, epoch);
+  const yarn_word_t range_mask = yarn_bit_mask_range(old_first, epoch+1);
   const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();
 
   write_flags &= range_mask;
@@ -580,3 +581,26 @@ static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flag
   yarn_epoch_do_rollback(rollback_epoch);
 
 }
+
+
+static inline void alignment_check (const void* addr) {
+  assert(sizeof(yarn_word_t) == 4 ? 
+	 ((uintptr_t)addr & ~3) == (uintptr_t)addr : 
+	 ((uintptr_t)addr & ~7) == (uintptr_t)addr);
+}
+
+static inline void dump_info(struct addr_info* info) {
+  printf("INFO["YARN_SHEX"] -> commit=%zu, writef="YARN_SHEX", readf="YARN_SHEX", ", 
+	 YARN_AHEX((uintptr_t)info->addr), info->last_commit, 
+	 YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
+
+  printf ("wbuf={");
+  for (yarn_word_t i = 0; i < YARN_EPOCH_MAX; ++i) {
+    if ((info->write_flags & YARN_BIT_MASK(i)) != 0) {
+      printf("%zu -> "YARN_SHEX", ", i, YARN_AHEX(info->write_buffer[i]));
+    }
+  }
+  printf("}\n");
+}
+
+
