@@ -219,6 +219,17 @@ START_TEST(t_dep_seq_rollback) {
   t_yarn_check_dep_store(f_seq.pid_3, &mem, YARN_T_VALUE_3);
   t_yarn_check_dep_load(f_seq.pid_4, &mem, YARN_T_VALUE_3);
 
+  yarn_epoch_do_rollback(f_seq.epoch_3);
+
+  t_yarn_check_epoch_status(f_seq.epoch_1, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_2, yarn_epoch_executing);
+  t_yarn_check_epoch_status(f_seq.epoch_3, yarn_epoch_pending_rollback);
+  t_yarn_check_epoch_status(f_seq.epoch_4, yarn_epoch_pending_rollback);
+
+  t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_2);
+
   yarn_dep_rollback(f_seq.pid_3);
 
   t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
@@ -229,10 +240,12 @@ START_TEST(t_dep_seq_rollback) {
 
   t_yarn_check_dep_store(f_seq.pid_3, &mem, YARN_T_VALUE_4);
 
-  t_yarn_check_epoch_status(f_seq.epoch_1, yarn_epoch_executing);
-  t_yarn_check_epoch_status(f_seq.epoch_2, yarn_epoch_executing);
-  t_yarn_check_epoch_status(f_seq.epoch_3, yarn_epoch_executing);
-  t_yarn_check_epoch_status(f_seq.epoch_4, yarn_epoch_executing);
+  t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
+  t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_2);
+
+  yarn_epoch_rollback_done(f_seq.epoch_3);
+  yarn_epoch_rollback_done(f_seq.epoch_4);
 
   t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
