@@ -315,7 +315,7 @@ bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data) {
   return true;
 }
 
-void yarn_epoch_set_commit(yarn_word_t epoch) {
+void yarn_epoch_commit_done(yarn_word_t epoch) {
   struct epoch_info* info = get_epoch_info(epoch);
 
   enum yarn_epoch_status old_status = yarn_readv(&info->status);

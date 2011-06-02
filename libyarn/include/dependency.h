@@ -35,8 +35,8 @@ bool yarn_dep_load_fast (yarn_word_t pool_id,
 			 const void* src, 
 			 void* dest);
 
-void yarn_dep_commit (yarn_word_t pool_id);
-void yarn_dep_rollback (yarn_word_t pool_id);
+void yarn_dep_commit (yarn_word_t epoch);
+void yarn_dep_rollback (yarn_word_t epoch);
 
 
 #endif // YARN_DEPENDENCY_H_

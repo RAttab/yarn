@@ -142,7 +142,7 @@ START_TEST(t_epoch_commit) {
     ret = yarn_epoch_get_next_commit(&epoch_to_commit, &task, &data);
     fail_if(!ret);
     t_yarn_check_data(task, data, VALUE);
-    yarn_epoch_set_commit(epoch_to_commit);
+    yarn_epoch_commit_done(epoch_to_commit);
   }
 
   for (int j = 0; j < IT_COUNT; ++j) {
@@ -164,7 +164,7 @@ START_TEST(t_epoch_commit) {
       t_yarn_check_data(task, data, VALUE);
       t_yarn_check_epoch_status(epoch_to_commit, yarn_epoch_done);
 
-      yarn_epoch_set_commit(epoch_to_commit);
+      yarn_epoch_commit_done(epoch_to_commit);
     }
 
   }
@@ -233,7 +233,7 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
       while(yarn_epoch_get_next_commit(&to_commit, &task, &data)) {
 	waste_time();
 	// printf("<%zu> - COMMIT=%zu\n", pool_id, to_commit);
-	yarn_epoch_set_commit(to_commit);
+	yarn_epoch_commit_done(to_commit);
       }
     }
   }

@@ -83,10 +83,10 @@ static void t_dep_seq_setup(void) {
 
 static void t_dep_seq_teardown(void) {
 
-  yarn_dep_rollback(f_seq.pid_1);
-  yarn_dep_rollback(f_seq.pid_2);
-  yarn_dep_rollback(f_seq.pid_3);
-  yarn_dep_rollback(f_seq.pid_4);
+  yarn_dep_rollback(f_seq.epoch_1);
+  yarn_dep_rollback(f_seq.epoch_2);
+  yarn_dep_rollback(f_seq.epoch_3);
+  yarn_dep_rollback(f_seq.epoch_4);
 
   yarn_dep_thread_destroy(f_seq.pid_1);
   yarn_dep_thread_destroy(f_seq.pid_2);
@@ -188,7 +188,7 @@ START_TEST(t_dep_seq_commit) {
   t_yarn_check_dep_mem(f_seq.pid_2, mem_2, 0, "COMMIT");
   t_yarn_check_dep_mem(f_seq.pid_2, mem_3, YARN_T_VALUE_2, "COMMIT");
   t_yarn_check_dep_mem(f_seq.pid_2, mem_4, 0, "COMMIT");
-
+  
   yarn_dep_commit(f_seq.pid_1);
   t_yarn_check_dep_mem(f_seq.pid_1, mem_1, YARN_T_VALUE_2, "COMMIT");
   t_yarn_check_dep_mem(f_seq.pid_1, mem_2, YARN_T_VALUE_1, "COMMIT");
@@ -218,7 +218,7 @@ START_TEST(t_dep_seq_rollback) {
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
   t_yarn_check_dep_store(f_seq.pid_3, &mem, YARN_T_VALUE_3);
   t_yarn_check_dep_load(f_seq.pid_4, &mem, YARN_T_VALUE_3);
-
+  
   yarn_epoch_do_rollback(f_seq.epoch_3);
 
   t_yarn_check_epoch_status(f_seq.epoch_1, yarn_epoch_executing);
@@ -230,13 +230,13 @@ START_TEST(t_dep_seq_rollback) {
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
   t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_2);
 
-  yarn_dep_rollback(f_seq.pid_3);
+  yarn_dep_rollback(f_seq.epoch_3);
 
   t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
   t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_2);
 
-  yarn_dep_rollback(f_seq.pid_4);
+  yarn_dep_rollback(f_seq.epoch_4);
 
   t_yarn_check_dep_store(f_seq.pid_3, &mem, YARN_T_VALUE_4);
 
@@ -246,7 +246,7 @@ START_TEST(t_dep_seq_rollback) {
 
   yarn_epoch_rollback_done(f_seq.epoch_3);
   yarn_epoch_rollback_done(f_seq.epoch_4);
-
+  
   t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_2);
   t_yarn_check_dep_load(f_seq.pid_2, &mem, YARN_T_VALUE_2);
   t_yarn_check_dep_load(f_seq.pid_3, &mem, YARN_T_VALUE_4);
@@ -256,16 +256,111 @@ START_TEST(t_dep_seq_rollback) {
 END_TEST
 
 
-static void t_dep_para_setup (void) {}
-static void t_dep_para_teardown (void) {}
 
-START_TEST(t_dep_para_load_store) {
+static struct {
+  yarn_word_t i;
+  yarn_word_t acc;
+  yarn_word_t n;
+  yarn_word_t r;
+} g_counter;
+
+
+static void t_dep_para_setup (void) {
+  t_dep_base_setup();
+
+  g_counter.i = 0;
+  g_counter.acc = 0;
+  g_counter.n = 10000;
+  g_counter.r = (g_counter.n*(g_counter.n+1))/2;
+}
+static void t_dep_para_teardown (void) {
+  t_dep_base_teardown();
+}
+
+
+#define CHECK_DEP(x) if(!(x)) goto dep_error;
+typedef enum {ok, done, err} ret_t;
+
+ret_t t_dep_para_full_calc(yarn_word_t pool_id) {
+
+  yarn_word_t i;
+  CHECK_DEP(yarn_dep_load(pool_id, &g_counter.i, &i));
+  i++;
+  CHECK_DEP(yarn_dep_store(pool_id, &i, &g_counter.i));
+      
+  if (i > g_counter.n) {
+    return done;
+  }
+      
+  yarn_word_t acc;
+  CHECK_DEP(yarn_dep_load(pool_id, &g_counter.acc, &acc));
+  acc += i;
+  CHECK_DEP(yarn_dep_store(pool_id, &acc, &g_counter.acc));
+
+  return ok;
+
+ dep_error:
+  perror(__FUNCTION__);
+  return err;
+}
+
+bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
+  (void) task;
+
+  while(true) {
+    enum yarn_epoch_status old_status;
+    const yarn_word_t epoch = yarn_epoch_next(&old_status);
+
+    //    printf("<%zu> => [%zu]\n", pool_id, epoch);
+
+    if (old_status == yarn_epoch_rollback) {
+      yarn_dep_rollback(epoch);
+      yarn_epoch_rollback_done(epoch);
+    }
+
+    bool init_ret = yarn_dep_thread_init(pool_id, epoch);
+    if (!init_ret) goto init_error;
+    
+    ret_t calc_ret = t_dep_para_full_calc(pool_id);
+
+    yarn_epoch_set_done(epoch);
+    yarn_dep_thread_destroy(pool_id);
+
+    yarn_word_t commit_epoch;
+    void* task;
+    void* data;
+    while (yarn_epoch_get_next_commit(&commit_epoch, &task, &data)) {
+      yarn_dep_commit(epoch);
+      yarn_epoch_commit_done(commit_epoch);
+    }
+
+    if (calc_ret == ok) {
+      continue;
+    }
+    // This isn't quite right since some of the calc might end up being rolled-back.
+    // It will do since we can't do it properly with just yarn_dep and yarn_epoch.
+    else if (calc_ret == done) {
+      //      printf("<%zu> => DONE\n", pool_id);
+      break;
+    }
+    else goto dep_error;
+
+  }
+
+  return true;
+
+ dep_error:
+ init_error:
+  perror(__FUNCTION__);
+  return false;
 
 }
-END_TEST
 
 START_TEST(t_dep_para_full) {
-
+  bool ret = yarn_tpool_exec(t_dep_para_full_worker, NULL);
+  fail_if (!ret);
+  fail_if (g_counter.acc != g_counter.r, 
+	   "answer=%zu, expected=%zu", g_counter.acc, g_counter.r);
 }
 END_TEST
 
@@ -283,7 +378,6 @@ Suite* yarn_dep_suite (void) {
 
   TCase* tc_para = tcase_create("yarn_dep.parallel");
   tcase_add_checked_fixture(tc_para, t_dep_para_setup, t_dep_para_teardown);
-  tcase_add_test(tc_para, t_dep_para_load_store);
   tcase_add_test(tc_para, t_dep_para_full);
   suite_add_tcase(s, tc_para);
 

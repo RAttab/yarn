@@ -62,7 +62,7 @@ They only update or prepare the epoch data structures.
 void yarn_epoch_do_rollback(yarn_word_t start);
 void yarn_epoch_rollback_done(yarn_word_t epoch);
 bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data);
-void yarn_epoch_set_commit(yarn_word_t epoch);
+void yarn_epoch_commit_done(yarn_word_t epoch);
 void yarn_epoch_set_done(yarn_word_t epoch);
 
 //! Returns the status of the epoch.

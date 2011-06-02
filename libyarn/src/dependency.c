@@ -172,15 +172,9 @@ void yarn_dep_global_destroy (void) {
     if (p_epoch != NULL) {
       free(p_epoch);
     }
-
-
   }
+
   yarn_pstore_destroy(g_epoch_store);
-
-  for (size_t i = 0; i < YARN_EPOCH_MAX; ++i) {
-    assert(g_info_list[i] == NULL);
-  }
-
   free(g_info_index);
 }
 
@@ -324,8 +318,7 @@ bool yarn_dep_load_fast (yarn_word_t pool_id,
 
 
 
-void yarn_dep_commit (yarn_word_t pool_id) {
-  const yarn_word_t epoch = get_epoch(pool_id);
+void yarn_dep_commit (yarn_word_t epoch) {
   const yarn_word_t epoch_index = YARN_BIT_INDEX(epoch);
   const yarn_word_t epoch_mask = YARN_BIT_MASK(epoch);
 
@@ -350,9 +343,7 @@ void yarn_dep_commit (yarn_word_t pool_id) {
 }
 
 
-void yarn_dep_rollback (yarn_word_t pool_id) {
-  const yarn_word_t epoch = get_epoch(pool_id);
-
+void yarn_dep_rollback (yarn_word_t epoch) {
   struct addr_info* info;
   while ((info = info_list_pop(epoch)) != NULL) {    
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
