@@ -270,7 +270,7 @@ static void t_dep_para_setup (void) {
 
   g_counter.i = 0;
   g_counter.acc = 0;
-  g_counter.n = 10000;
+  g_counter.n = 100000;
   g_counter.r = (g_counter.n*(g_counter.n+1))/2;
 }
 static void t_dep_para_teardown (void) {
@@ -311,8 +311,6 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     enum yarn_epoch_status old_status;
     const yarn_word_t epoch = yarn_epoch_next(&old_status);
 
-    //    printf("<%zu> => [%zu]\n", pool_id, epoch);
-
     if (old_status == yarn_epoch_rollback) {
       yarn_dep_rollback(epoch);
       yarn_epoch_rollback_done(epoch);
@@ -330,7 +328,7 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     void* task;
     void* data;
     while (yarn_epoch_get_next_commit(&commit_epoch, &task, &data)) {
-      yarn_dep_commit(epoch);
+      yarn_dep_commit(commit_epoch);
       yarn_epoch_commit_done(commit_epoch);
     }
 
@@ -357,10 +355,16 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
 }
 
 START_TEST(t_dep_para_full) {
+
   bool ret = yarn_tpool_exec(t_dep_para_full_worker, NULL);
   fail_if (!ret);
   fail_if (g_counter.acc != g_counter.r, 
 	   "answer=%zu, expected=%zu", g_counter.acc, g_counter.r);
+  
+  yarn_word_t commit_epoch;
+  void* task;
+  void* data;    
+  fail_if (yarn_epoch_get_next_commit(&commit_epoch, &task, &data));
 }
 END_TEST
 

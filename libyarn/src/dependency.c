@@ -84,7 +84,10 @@ static inline void load_from_wbuf (struct addr_info* info, yarn_word_t epoch,
 				   const void* src, void* dest, size_t size); 
 
 static inline void alignment_check (const void* addr);
+
+// Use inline to prevent the compiler from whining.
 static inline void dump_info(struct addr_info* info);
+static inline void dump_flags(yarn_word_t f);
 
 
 
@@ -326,17 +329,21 @@ void yarn_dep_commit (yarn_word_t epoch) {
   while ((info = info_list_pop(epoch)) != NULL) {
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
 
+    yarn_word_t flag_mask = yarn_bit_mask_range(yarn_epoch_first(), epoch+1);
+
     // Write the value to memory only if no newer value was written.
-    if ((info->write_flags & epoch_mask) && 
-	yarn_timestamp_comp(epoch, info->last_commit) > 0) 
-    {
-      memcpy(info->addr, &info->write_buffer[epoch_index], sizeof(yarn_word_t));
-      info->last_commit = epoch;
+    if (info->write_flags & epoch_mask) {
+
+      if (yarn_timestamp_comp(epoch, info->last_commit) > 0) {
+	memcpy(info->addr, &info->write_buffer[epoch_index], sizeof(yarn_word_t));
+	info->last_commit = epoch;
+      }
+      
+      info->write_flags &= ~flag_mask;
+
     }
 
-    // Clear the flags.
-    info->write_flags = YARN_BIT_CLEAR(info->write_flags, epoch);
-    info->read_flags = YARN_BIT_CLEAR(info->read_flags, epoch);
+    info->read_flags &= ~flag_mask;
     
     YARN_CHECK_RET0(pthread_mutex_unlock(&info->lock));
   }
@@ -555,24 +562,42 @@ static inline void load_from_wbuf (struct addr_info* info,
 }
 
 
+
 static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flags) {
 
   const yarn_word_t last_epoch = yarn_epoch_last();
-  if (epoch >= last_epoch) {
+  if (epoch+1 >= last_epoch) {
     return;
   }
 
   const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();  
-  const yarn_word_t range_mask = yarn_bit_mask_range(epoch+1, last_epoch);
-  
-  read_flags &= range_mask;
   read_flags &= rollback_mask;
 
-  if (read_flags == 0) {
-    return;
+  const yarn_word_t first_index = YARN_BIT_INDEX(epoch+1);
+  const yarn_word_t last_index = YARN_BIT_INDEX(last_epoch);
+
+  yarn_word_t flags;
+
+  if (first_index < last_index) {
+    const yarn_word_t range_mask = yarn_bit_mask_range(first_index, last_index);    
+    flags = read_flags & range_mask;    
   }
 
-  yarn_word_t rollback_index = yarn_bit_trailing_zeros(read_flags);
+  else {
+    const yarn_word_t first_mask = yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
+    flags = read_flags & first_mask;
+
+    if (flags == 0) {
+      const yarn_word_t second_mask = yarn_bit_mask_range(0, last_index);
+      flags = read_flags & second_mask;
+    }
+  }
+
+  if (flags == 0) {
+    return;
+  }    
+
+  yarn_word_t rollback_index = yarn_bit_trailing_zeros(flags);
   yarn_word_t rollback_epoch = index_to_epoch_after(epoch, rollback_index);
   yarn_epoch_do_rollback(rollback_epoch);
 
@@ -585,12 +610,24 @@ static inline void alignment_check (const void* addr) {
 	 ((uintptr_t)addr & ~7) == (uintptr_t)addr);
 }
 
+
 static inline void dump_info(struct addr_info* info) {
-  printf("INFO["YARN_SHEX"] -> commit=%zu, writef="YARN_SHEX", readf="YARN_SHEX", ", 
-	 YARN_AHEX((uintptr_t)info->addr), info->last_commit, 
+  printf("INFO["YARN_SHEX"] -> commit=%zu, wf="YARN_SHEX", rf="YARN_SHEX"\n", 
+	 YARN_AHEX((uintptr_t)info->addr), info->last_commit,
 	 YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
 
-  printf ("wbuf={");
+  
+  /*
+  printf("INFO["YARN_SHEX"] -> commit=%zu", 
+	 YARN_AHEX((uintptr_t)info->addr), info->last_commit);
+
+  printf(", writef=");
+  dump_flags(info->write_flags);
+  printf(", readf=");
+  dump_flags(info->read_flags);
+  */
+
+  printf (", wbuf={");
   for (yarn_word_t i = 0; i < YARN_EPOCH_MAX; ++i) {
     if ((info->write_flags & YARN_BIT_MASK(i)) != 0) {
       printf("%zu -> "YARN_SHEX", ", i, YARN_AHEX(info->write_buffer[i]));
@@ -599,4 +636,18 @@ static inline void dump_info(struct addr_info* info) {
   printf("}\n");
 }
 
+static inline void dump_flags(yarn_word_t f) {
+  printf("{");
+  
+  yarn_word_t b;
+  while (f != 0) {
+
+    b = yarn_bit_log2(f);
+    f = YARN_BIT_CLEAR(f, b);
+
+    printf("%zu", b);
+    if (f != 0) printf(",");
+  }
+  printf("}");
+}
 
