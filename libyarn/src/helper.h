@@ -19,10 +19,10 @@ Several helper macros, constants and whatever else I consider helperful.
 // Prints a 64 bit hexadecimal value.
 //! \todo Needs fixing for 32 bit.
 #ifdef YARN_WORD_64
-#  define YARN_SHEX "0x%x%x"
+#  define YARN_SHEX "0x%08x%08x"
 #  define YARN_AHEX(v) (uint32_t)(((yarn_word_t)v)>>32), (uint32_t)(v)
 #else
-#  define YARN_SHEX "%zu"
+#  define YARN_SHEX "0x%08x"
 #  define YARN_AHEX(v) (v)
 #endif
 
