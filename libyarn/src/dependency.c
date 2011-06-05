@@ -330,20 +330,21 @@ void yarn_dep_commit (yarn_word_t epoch) {
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
 
     yarn_word_t flag_mask = yarn_bit_mask_range(yarn_epoch_first(), epoch+1);
+    info->read_flags &= ~flag_mask;
 
-    // Write the value to memory only if no newer value was written.
     if (info->write_flags & epoch_mask) {
+      info->write_flags &= ~flag_mask;
 
+    // Write the value to memory only if no newer value was already written.
       if (yarn_timestamp_comp(epoch, info->last_commit) > 0) {
+
+	yarn_word_t val =  info->write_buffer[epoch_index];
+	printf("[%3zu] WRITTING -> {"YARN_SHEX"}=%zu\n",
+	       epoch, YARN_AHEX((uintptr_t)info->addr), val);
 	memcpy(info->addr, &info->write_buffer[epoch_index], sizeof(yarn_word_t));
 	info->last_commit = epoch;
       }
-      
-      info->write_flags &= ~flag_mask;
-
     }
-
-    info->read_flags &= ~flag_mask;
     
     YARN_CHECK_RET0(pthread_mutex_unlock(&info->lock));
   }
@@ -354,6 +355,9 @@ void yarn_dep_rollback (yarn_word_t epoch) {
   struct addr_info* info;
   while ((info = info_list_pop(epoch)) != NULL) {    
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
+
+    printf("[%3zu] ROLLBACK -> {"YARN_SHEX"}\n", 
+	   epoch, YARN_AHEX((uintptr_t) info->addr));
     
     info->write_flags = YARN_BIT_CLEAR(info->write_flags, epoch);
     info->read_flags = YARN_BIT_CLEAR(info->read_flags, epoch);    
@@ -512,6 +516,10 @@ static inline void store_to_wbuf (struct addr_info* info,
 
   info->write_flags = YARN_BIT_SET(info->write_flags, epoch);
   memcpy(&info->write_buffer[epoch_index], src, size);
+
+  printf("[%3zu] STORE    -> {"YARN_SHEX"}=%zu\n",
+	 epoch, YARN_AHEX((uintptr_t)info->addr), 
+	 info->write_buffer[epoch_index]);
 }
 
 static inline void load_from_wbuf (struct addr_info* info, 
@@ -523,42 +531,51 @@ static inline void load_from_wbuf (struct addr_info* info,
   info->read_flags = YARN_BIT_SET(info->read_flags, epoch);
   yarn_word_t write_flags = info->write_flags;
 
-  // We could release the lock here.
-  //  This would lessen the chance of failing to lock but requires some extra checking.
+  // Could realease the lock here but requires some extra checks.
 
-  const yarn_word_t old_first = yarn_epoch_first();
-
-  const yarn_word_t range_mask = yarn_bit_mask_range(old_first, epoch+1);
   const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();
-
-  write_flags &= range_mask;
   write_flags &= rollback_mask;
 
-  // Check in wbuf for a value to read.
-  if (write_flags != 0) {
-    const yarn_word_t read_index = yarn_bit_log2(write_flags);
+  const yarn_word_t first_index = YARN_BIT_INDEX(yarn_epoch_first());
+  const yarn_word_t last_index = YARN_BIT_INDEX(epoch+1);
 
-    // See below for why it's commented out.
-    // const yarn_word_t read_epoch = index_to_epoch_before(epoch, read_index);
 
-    memcpy(dest, &info->write_buffer[read_index], size);
+  yarn_word_t flags;
+  if (first_index <= last_index) {
+    flags = write_flags & yarn_bit_mask_range(first_index, last_index);
+  }
+  else {
+    flags = write_flags & yarn_bit_mask_range(0, last_index);
+    if (flags == 0) {
+      flags = write_flags & yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
+    }
+  }
 
-    return;
+  // Read the earliest write in the buffer.
+  if (flags != 0) {
+    const yarn_word_t read_index = yarn_bit_log2(flags);
 
-    /* This part is unecessary since we own the lock on the object. 
-       Use this only if we decide to release the lock before performing the load.
-
-    const yarn_word_t new_first = yarn_epoch_first();
-    // If the value was comitted while we were reading, go to memory.
-    if (yarn_timestamp_comp(new_first, read_epoch) <= 0) {
-      return;
+    { // DEBUG
+      const yarn_word_t read_epoch = index_to_epoch_before(epoch, read_index);
+      printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - BUF[%3zu]\n",
+	     epoch, YARN_AHEX((uintptr_t)info->addr),
+	     info->write_buffer[read_index], read_epoch);
     }
 
-    */
+    memcpy(dest, &info->write_buffer[read_index], size);
   }
-  
-  // No values in the buffer, read straight from memory.
-  memcpy(dest, src, size);
+
+  // No value in the buffer, go to memory.
+  else {
+    { // DEBUG
+      yarn_word_t t_val;
+      memcpy(&t_val, src, size);
+      printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - MEM\n",
+	     epoch, YARN_AHEX((uintptr_t)info->addr), t_val);
+    }
+    
+    memcpy(dest, src, size);
+  }
 }
 
 
@@ -577,19 +594,13 @@ static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flag
   const yarn_word_t last_index = YARN_BIT_INDEX(last_epoch);
 
   yarn_word_t flags;
-
   if (first_index < last_index) {
-    const yarn_word_t range_mask = yarn_bit_mask_range(first_index, last_index);    
-    flags = read_flags & range_mask;    
+    flags = read_flags & yarn_bit_mask_range(first_index, last_index);
   }
-
   else {
-    const yarn_word_t first_mask = yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
-    flags = read_flags & first_mask;
-
+    flags = read_flags & yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
     if (flags == 0) {
-      const yarn_word_t second_mask = yarn_bit_mask_range(0, last_index);
-      flags = read_flags & second_mask;
+      flags = read_flags & yarn_bit_mask_range(0, last_index);
     }
   }
 
@@ -626,7 +637,7 @@ static inline void dump_info(struct addr_info* info) {
   printf(", readf=");
   dump_flags(info->read_flags);
   */
-
+  /*
   printf (", wbuf={");
   for (yarn_word_t i = 0; i < YARN_EPOCH_MAX; ++i) {
     if ((info->write_flags & YARN_BIT_MASK(i)) != 0) {
@@ -634,6 +645,7 @@ static inline void dump_info(struct addr_info* info) {
     }
   }
   printf("}\n");
+  */
 }
 
 static inline void dump_flags(yarn_word_t f) {
