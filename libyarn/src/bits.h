@@ -27,7 +27,13 @@ inline yarn_word_t yarn_bit_mask_range (yarn_word_t first, yarn_word_t second) {
   yarn_word_t a = ((yarn_word_t)1) << YARN_BIT_INDEX(first);
   yarn_word_t b = ((yarn_word_t)1) << YARN_BIT_INDEX(second);
   yarn_word_t c = (a-1) ^ (b-1);
-  return a <= b ? c : ~c;
+
+  if (a != b) {
+    return a < b ? c : ~c;
+  }
+  else {
+    return first >= second ? c : ~c;
+  }
 }
 
 
