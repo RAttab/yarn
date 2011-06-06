@@ -269,7 +269,7 @@ static void t_dep_para_setup (void) {
 
   g_counter.i = 0;
   g_counter.acc = 0;
-  g_counter.n = 100;
+  g_counter.n = 1000;
   g_counter.r = (g_counter.n*(g_counter.n+1))/2;
 }
 static void t_dep_para_teardown (void) {

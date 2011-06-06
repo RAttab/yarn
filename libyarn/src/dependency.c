@@ -554,7 +554,7 @@ static inline void load_from_wbuf (struct addr_info* info,
   yarn_word_t flags;
   yarn_word_t mask;
 
-  if (first_index <= last_index) {
+  if (first_index < last_index) {
     // Must use the epochs here (the index might be equal but the epochs might not).
     mask = yarn_bit_mask_range(first_epoch, last_epoch);
     flags = write_flags & mask;
@@ -641,7 +641,6 @@ static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flag
   yarn_word_t rollback_index = yarn_bit_trailing_zeros(flags);
   yarn_word_t rollback_epoch = index_to_epoch_after(epoch, rollback_index);
   yarn_epoch_do_rollback(rollback_epoch);
-
 }
 
 

@@ -247,10 +247,16 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
       DBG(printf("[%zu] - DO_ROLLBACK - old_status=%d, new_status=%d\n", 
 		 epoch, old_status, new_status));
 
-      // No need for a cas loop since anything that has been rollback will have to go
-      // through a call to next() before set_executing will return true.
-      yarn_word_t old_flag = yarn_readv(&g_rollback_flag);
-      yarn_writev(&g_rollback_flag, YARN_BIT_SET(old_flag, epoch));
+      // Update the rollbackflag.
+      yarn_word_t old_flag;
+      yarn_word_t new_flag;
+      do {
+	old_flag = yarn_readv(&g_rollback_flag);
+	new_flag = YARN_BIT_SET(old_flag, epoch);
+      } while (yarn_casv(&g_rollback_flag, old_flag, new_flag) != old_flag);
+
+      printf("[---] ROLLBACK -> SET [%3zu] - flag="YARN_SHEX"\n", 
+	     epoch, YARN_AHEX(new_flag));
     }
   }
 
@@ -275,6 +281,9 @@ void yarn_epoch_rollback_done(yarn_word_t epoch) {
     old_flag = yarn_readv(&g_rollback_flag);
     new_flag = YARN_BIT_CLEAR(old_flag, epoch);
   } while (yarn_casv(&g_rollback_flag, old_flag, new_flag) != old_flag);
+
+  printf("[---] ROLLBACK -> CLEAR [%3zu] - flag="YARN_SHEX"\n", 
+	 epoch, YARN_AHEX(new_flag));
 }
 
 
