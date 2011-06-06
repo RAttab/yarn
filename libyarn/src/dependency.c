@@ -338,9 +338,12 @@ void yarn_dep_commit (yarn_word_t epoch) {
     // Write the value to memory only if no newer value was already written.
       if (yarn_timestamp_comp(epoch, info->last_commit) > 0) {
 
+	yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
 	yarn_word_t val =  info->write_buffer[epoch_index];
-	printf("[%3zu] WRITTING -> {"YARN_SHEX"}=%zu\n",
-	       epoch, YARN_AHEX((uintptr_t)info->addr), val);
+	printf("[%3zu] WRITTING -> {"YARN_SHEX"}=%zu"
+	       "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
+	       epoch, YARN_AHEX((uintptr_t)info->addr), val, YARN_AHEX(rb_mask),
+	       YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
 	memcpy(info->addr, &info->write_buffer[epoch_index], sizeof(yarn_word_t));
 	info->last_commit = epoch;
       }
@@ -355,12 +358,15 @@ void yarn_dep_rollback (yarn_word_t epoch) {
   struct addr_info* info;
   while ((info = info_list_pop(epoch)) != NULL) {    
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
-
-    printf("[%3zu] ROLLBACK -> {"YARN_SHEX"}\n", 
-	   epoch, YARN_AHEX((uintptr_t) info->addr));
     
     info->write_flags = YARN_BIT_CLEAR(info->write_flags, epoch);
     info->read_flags = YARN_BIT_CLEAR(info->read_flags, epoch);    
+
+    yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
+    printf("[%3zu] ROLLBACK -> {"YARN_SHEX"}"
+	   "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
+	   epoch, YARN_AHEX((uintptr_t) info->addr), YARN_AHEX(rb_mask),
+	   YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
 
     YARN_CHECK_RET0(pthread_mutex_unlock(&info->lock));
   }  
@@ -517,9 +523,12 @@ static inline void store_to_wbuf (struct addr_info* info,
   info->write_flags = YARN_BIT_SET(info->write_flags, epoch);
   memcpy(&info->write_buffer[epoch_index], src, size);
 
-  printf("[%3zu] STORE    -> {"YARN_SHEX"}=%zu\n",
+  yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
+  printf("[%3zu] STORE    -> {"YARN_SHEX"}=%zu"
+	 "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
 	 epoch, YARN_AHEX((uintptr_t)info->addr), 
-	 info->write_buffer[epoch_index]);
+	 info->write_buffer[epoch_index], YARN_AHEX(rb_mask),
+	 YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
 }
 
 static inline void load_from_wbuf (struct addr_info* info, 
@@ -536,30 +545,44 @@ static inline void load_from_wbuf (struct addr_info* info,
   const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();
   write_flags &= rollback_mask;
 
-  const yarn_word_t first_index = YARN_BIT_INDEX(yarn_epoch_first());
+  const yarn_word_t first_epoch = yarn_epoch_first();
+  const yarn_word_t first_index = YARN_BIT_INDEX(first_epoch);
+  const yarn_word_t last_epoch = epoch+1;
   const yarn_word_t last_index = YARN_BIT_INDEX(epoch+1);
 
 
   yarn_word_t flags;
+  yarn_word_t mask;
+
   if (first_index <= last_index) {
-    flags = write_flags & yarn_bit_mask_range(first_index, last_index);
+    // Must use the epochs here (the index might be equal but the epochs might not).
+    mask = yarn_bit_mask_range(first_epoch, last_epoch);
+    flags = write_flags & mask;
   }
   else {
-    flags = write_flags & yarn_bit_mask_range(0, last_index);
+    mask = yarn_bit_mask_range(0, last_index);
+    flags = write_flags & mask;
     if (flags == 0) {
-      flags = write_flags & yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
+      yarn_word_t second_mask = yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
+      mask |= second_mask;
+      flags = write_flags & second_mask;
     }
   }
 
   // Read the earliest write in the buffer.
-  if (flags != 0) {
+  if (flags) {
     const yarn_word_t read_index = yarn_bit_log2(flags);
 
     { // DEBUG
       const yarn_word_t read_epoch = index_to_epoch_before(epoch, read_index);
-      printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - BUF[%3zu]\n",
+      printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - BUF[%3zu]"
+	     "\t\tfirst_e=%zu, (%zu, %zu), mask="YARN_SHEX", rb_mask="YARN_SHEX
+	     ", wf="YARN_SHEX", rf="YARN_SHEX"\n",
 	     epoch, YARN_AHEX((uintptr_t)info->addr),
-	     info->write_buffer[read_index], read_epoch);
+	     info->write_buffer[read_index], read_epoch, 
+	     first_epoch, first_index, last_index,
+	     YARN_AHEX(mask), YARN_AHEX(rollback_mask),
+	     YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
     }
 
     memcpy(dest, &info->write_buffer[read_index], size);
@@ -570,8 +593,13 @@ static inline void load_from_wbuf (struct addr_info* info,
     { // DEBUG
       yarn_word_t t_val;
       memcpy(&t_val, src, size);
-      printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - MEM\n",
-	     epoch, YARN_AHEX((uintptr_t)info->addr), t_val);
+      printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - MEM"
+	     "\t\tfirst_e=%zu, (%zu, %zu), mask="YARN_SHEX", rb_mask="YARN_SHEX
+	     ", wf="YARN_SHEX", rf="YARN_SHEX"\n",
+	     epoch, YARN_AHEX((uintptr_t)info->addr), t_val, 
+	     first_epoch, first_index, last_index,
+	     YARN_AHEX(mask), YARN_AHEX(rollback_mask), 
+	     YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
     }
     
     memcpy(dest, src, size);
@@ -582,20 +610,22 @@ static inline void load_from_wbuf (struct addr_info* info,
 
 static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flags) {
 
+  const yarn_word_t first_epoch = epoch+1;
   const yarn_word_t last_epoch = yarn_epoch_last();
-  if (epoch+1 >= last_epoch) {
+  if (first_epoch >= last_epoch) {
     return;
   }
 
   const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();  
   read_flags &= rollback_mask;
 
-  const yarn_word_t first_index = YARN_BIT_INDEX(epoch+1);
+  const yarn_word_t first_index = YARN_BIT_INDEX(first_epoch);
   const yarn_word_t last_index = YARN_BIT_INDEX(last_epoch);
 
   yarn_word_t flags;
   if (first_index < last_index) {
-    flags = read_flags & yarn_bit_mask_range(first_index, last_index);
+    // Must use the epochs here (the index might be equal but the epochs might not).
+    flags = read_flags & yarn_bit_mask_range(first_epoch, last_epoch);
   }
   else {
     flags = read_flags & yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
