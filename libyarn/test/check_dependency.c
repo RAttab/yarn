@@ -15,6 +15,9 @@
 #include <assert.h>
 #include <stdio.h>
 
+#define YARN_DBG 0
+#include "dbg.h"
+
 
 static yarn_word_t g_index_size;
 
@@ -311,12 +314,12 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     const yarn_word_t epoch = yarn_epoch_next(&old_status);
 
     if (old_status == yarn_epoch_rollback) {
-      printf("\t\t\t\t\t\t\t\t<%zu> NEXT   => [%3zu] - ROLLBACK\n", pool_id, epoch);
+      DBG printf("\t\t\t\t\t\t\t\t<%zu> NEXT   => [%3zu] - ROLLBACK\n", pool_id, epoch);
       yarn_dep_rollback(epoch);
       yarn_epoch_rollback_done(epoch);
     }
     else {
-      printf("\t\t\t\t\t\t\t\t<%zu> NEXT   => [%3zu]\n", pool_id, epoch);
+      DBG printf("\t\t\t\t\t\t\t\t<%zu> NEXT   => [%3zu]\n", pool_id, epoch);
     }
 
     bool init_ret = yarn_dep_thread_init(pool_id, epoch);
@@ -324,7 +327,7 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     
     ret_t calc_ret = t_dep_para_full_calc(pool_id);
 
-    printf("\t\t\t\t\t\t\t\t<%zu> DONE   => [%3zu]\n", pool_id, epoch);
+    DBG printf("\t\t\t\t\t\t\t\t<%zu> DONE   => [%3zu]\n", pool_id, epoch);
     yarn_epoch_set_done(epoch);
     yarn_dep_thread_destroy(pool_id);
 
@@ -332,7 +335,7 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     void* task;
     void* data;
     while (yarn_epoch_get_next_commit(&commit_epoch, &task, &data)) {
-      printf("\t\t\t\t\t\t\t\t<%zu> COMMIT => [%3zu]\n", pool_id, commit_epoch);
+      DBG printf("\t\t\t\t\t\t\t\t<%zu> COMMIT => [%3zu]\n", pool_id, commit_epoch);
       yarn_dep_commit(commit_epoch);
       yarn_epoch_commit_done(commit_epoch);
     }
@@ -343,7 +346,7 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     // This isn't quite right since some of the calc might end up being rolled-back.
     // It will do since we can't do it properly with just yarn_dep and yarn_epoch.
     else if (calc_ret == done) {
-      printf("\t\t\t\t\t\t\t\t<%zu> DONE\n", pool_id);
+      DBG printf("\t\t\t\t\t\t\t\t<%zu> DONE\n", pool_id);
       break;
     }
     else goto dep_error;

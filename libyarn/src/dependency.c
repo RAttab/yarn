@@ -24,6 +24,10 @@
 #include <string.h>
 
 
+#define YARN_DBG 0
+#include "dbg.h"
+
+
 struct addr_info {
   void* addr;
   yarn_word_t last_commit;
@@ -334,16 +338,19 @@ void yarn_dep_commit (yarn_word_t epoch) {
 
     if (info->write_flags & epoch_mask) {
       info->write_flags &= ~flag_mask;
-
-    // Write the value to memory only if no newer value was already written.
+      
+      // Write the value to memory only if no newer value was already written.
       if (yarn_timestamp_comp(epoch, info->last_commit) > 0) {
 
-	yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
-	yarn_word_t val =  info->write_buffer[epoch_index];
-	printf("[%3zu] WRITTING -> {"YARN_SHEX"}=%zu"
-	       "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
-	       epoch, YARN_AHEX((uintptr_t)info->addr), val, YARN_AHEX(rb_mask),
-	       YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
+	DBG {
+	  yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
+	  yarn_word_t val =  info->write_buffer[epoch_index];
+	  printf("[%3zu] WRITTING -> {"YARN_SHEX"}=%zu"
+		 "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
+		 epoch, YARN_AHEX((uintptr_t)info->addr), val, YARN_AHEX(rb_mask),
+		 YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
+	}
+
 	memcpy(info->addr, &info->write_buffer[epoch_index], sizeof(yarn_word_t));
 	info->last_commit = epoch;
       }
@@ -362,11 +369,13 @@ void yarn_dep_rollback (yarn_word_t epoch) {
     info->write_flags = YARN_BIT_CLEAR(info->write_flags, epoch);
     info->read_flags = YARN_BIT_CLEAR(info->read_flags, epoch);    
 
-    yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
-    printf("[%3zu] ROLLBACK -> {"YARN_SHEX"}"
-	   "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
-	   epoch, YARN_AHEX((uintptr_t) info->addr), YARN_AHEX(rb_mask),
-	   YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
+    DBG {
+      yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
+      printf("[%3zu] ROLLBACK -> {"YARN_SHEX"}"
+	     "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
+	     epoch, YARN_AHEX((uintptr_t) info->addr), YARN_AHEX(rb_mask),
+	     YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
+    }
 
     YARN_CHECK_RET0(pthread_mutex_unlock(&info->lock));
   }  
@@ -523,12 +532,14 @@ static inline void store_to_wbuf (struct addr_info* info,
   info->write_flags = YARN_BIT_SET(info->write_flags, epoch);
   memcpy(&info->write_buffer[epoch_index], src, size);
 
-  yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
-  printf("[%3zu] STORE    -> {"YARN_SHEX"}=%zu"
-	 "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
-	 epoch, YARN_AHEX((uintptr_t)info->addr), 
-	 info->write_buffer[epoch_index], YARN_AHEX(rb_mask),
-	 YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
+  DBG {
+    yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
+    printf("[%3zu] STORE    -> {"YARN_SHEX"}=%zu"
+	   "\t\t\t\t\t\t\t\trb_mask="YARN_SHEX", wf="YARN_SHEX", rf="YARN_SHEX"\n",
+	   epoch, YARN_AHEX((uintptr_t)info->addr), 
+	   info->write_buffer[epoch_index], YARN_AHEX(rb_mask),
+	   YARN_AHEX(info->write_flags), YARN_AHEX(info->read_flags));
+  }
 }
 
 static inline void load_from_wbuf (struct addr_info* info, 
@@ -573,7 +584,7 @@ static inline void load_from_wbuf (struct addr_info* info,
   if (flags) {
     const yarn_word_t read_index = yarn_bit_log2(flags);
 
-    { // DEBUG
+    DBG {
       const yarn_word_t read_epoch = index_to_epoch_before(epoch, read_index);
       printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - BUF[%3zu]"
 	     "\t\tfirst_e=%zu, (%zu, %zu), mask="YARN_SHEX", rb_mask="YARN_SHEX
@@ -590,7 +601,7 @@ static inline void load_from_wbuf (struct addr_info* info,
 
   // No value in the buffer, go to memory.
   else {
-    { // DEBUG
+    DBG {
       yarn_word_t t_val;
       memcpy(&t_val, src, size);
       printf("[%3zu] LOAD     -> {"YARN_SHEX"}=%zu - MEM"
