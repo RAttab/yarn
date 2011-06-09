@@ -49,21 +49,18 @@ error messages of the fail_xxx macros.
 
 #define t_yarn_set_epoch_data(epoch, value)	\
   do {						\
-    yarn_epoch_set_data((epoch), (value));	\
     yarn_epoch_set_task((epoch), (value));	\
   } while(false)
 
-#define t_yarn_check_data(data, task, expected)				\
+#define t_yarn_check_data(task, expected)				\
   do {									\
-    fail_if((data) != (expected), "data=%p, expected=%p", (data), (expected)); \
     fail_if((task) != (expected), "task=%p, expected=%p", (task), (expected)); \
   } while(false)
 
 #define t_yarn_check_epoch_data(epoch, expected)	\
   do {							\
-    void* data = yarn_epoch_get_data(epoch);		\
     void* task = (void*) yarn_epoch_get_task(epoch);	\
-    t_yarn_check_data(data, task, expected);		\
+    t_yarn_check_data(task, expected);			\
   } while(false)
 
 

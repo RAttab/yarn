@@ -15,7 +15,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#define YARN_DBG 0
+#define YARN_DBG 1
 #include "dbg.h"
 
 
@@ -67,19 +67,19 @@ static void t_dep_seq_setup(void) {
   enum yarn_epoch_status noop;
 
   f_seq.pid_1 = 0;
-  f_seq.epoch_1 = yarn_epoch_next(&noop);
+  yarn_epoch_next(&f_seq.epoch_1, &noop);
   yarn_dep_thread_init(f_seq.pid_1, f_seq.epoch_1);
 
   f_seq.pid_2 = 1;
-  f_seq.epoch_2 = yarn_epoch_next(&noop);
+  yarn_epoch_next(&f_seq.epoch_2, &noop);
   yarn_dep_thread_init(f_seq.pid_2, f_seq.epoch_2);
 
   f_seq.pid_3 = 2;
-  f_seq.epoch_3 = yarn_epoch_next(&noop);
+  yarn_epoch_next(&f_seq.epoch_3, &noop);
   yarn_dep_thread_init(f_seq.pid_3, f_seq.epoch_3);
 
   f_seq.pid_4 = 3;
-  f_seq.epoch_4 = yarn_epoch_next(&noop);
+  yarn_epoch_next(&f_seq.epoch_4, &noop);
   yarn_dep_thread_init(f_seq.pid_4, f_seq.epoch_4);
 
 }
@@ -311,7 +311,11 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
 
   while(true) {
     enum yarn_epoch_status old_status;
-    const yarn_word_t epoch = yarn_epoch_next(&old_status);
+    yarn_word_t epoch;
+    if (!yarn_epoch_next(&epoch, &old_status)) {
+      DBG printf("\t\t\t\t\t\t\t\t<%zu> STOP\n", pool_id);
+      break;
+    }
 
     if (old_status == yarn_epoch_rollback) {
       DBG printf("\t\t\t\t\t\t\t\t<%zu> NEXT   => [%3zu] - ROLLBACK\n", pool_id, epoch);
@@ -326,15 +330,16 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     if (!init_ret) goto init_error;
     
     ret_t calc_ret = t_dep_para_full_calc(pool_id);
+    if (calc_ret == done) {
+      yarn_epoch_stop(epoch);
+    }
 
     DBG printf("\t\t\t\t\t\t\t\t<%zu> DONE   => [%3zu]\n", pool_id, epoch);
     yarn_epoch_set_done(epoch);
     yarn_dep_thread_destroy(pool_id);
-
     yarn_word_t commit_epoch;
     void* task;
-    void* data;
-    while (yarn_epoch_get_next_commit(&commit_epoch, &task, &data)) {
+    while (yarn_epoch_get_next_commit(&commit_epoch, &task)) {
       DBG printf("\t\t\t\t\t\t\t\t<%zu> COMMIT => [%3zu]\n", pool_id, commit_epoch);
       yarn_dep_commit(commit_epoch);
       yarn_epoch_commit_done(commit_epoch);
@@ -343,16 +348,13 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     if (calc_ret == ok) {
       continue;
     }
-    // This isn't quite right since some of the calc might end up being rolled-back.
-    // It will do since we can't do it properly with just yarn_dep and yarn_epoch.
-    else if (calc_ret == done) {
-      DBG printf("\t\t\t\t\t\t\t\t<%zu> DONE\n", pool_id);
-      break;
+    else if (calc_ret == err) {
+      goto dep_error;
     }
-    else goto dep_error;
 
   }
 
+  fail_if(false);
   return true;
 
  dep_error:
@@ -371,8 +373,7 @@ START_TEST(t_dep_para_full) {
   
   yarn_word_t commit_epoch;
   void* task;
-  void* data;    
-  fail_if (yarn_epoch_get_next_commit(&commit_epoch, &task, &data));
+  fail_if (yarn_epoch_get_next_commit(&commit_epoch, &task));
 }
 END_TEST
 
@@ -381,42 +382,12 @@ END_TEST
 void cycle_epoch(yarn_word_t epoch) {
   yarn_word_t commit_epoch;
   void* task;
-  void* data;    
 
   yarn_epoch_set_done(epoch);
-  yarn_epoch_get_next_commit(&commit_epoch, &task, &data);
+  yarn_epoch_get_next_commit(&commit_epoch, &task);
   assert(epoch == commit_epoch);
   yarn_epoch_commit_done(commit_epoch);
 }
-
-START_TEST(t_dep_misc_edge) {
-  const yarn_word_t pid_64 = 0;
-  const yarn_word_t pid_65 = 1;
-
-  enum yarn_epoch_status old_status;
-  {  
-    yarn_word_t epoch;
-    do {
-      epoch = yarn_epoch_next(&old_status);
-      cycle_epoch(epoch);
-    } while (epoch <= 49);
-  }
-
-  for (yarn_word_t i = 0; i < 16; ++i) {
-    yarn_word_t epoch_64 = yarn_epoch_next(&old_status);
-    yarn_dep_thread_init(pid_64, epoch_64);
-    
-    yarn_word_t epoch_65 = yarn_epoch_next(&old_status);
-    yarn_dep_thread_init(pid_65, epoch_65);
-    
-    yarn_word_t mem = YARN_T_VALUE_1;
-    t_yarn_check_dep_store(pid_64, &mem, YARN_T_VALUE_2);
-    t_yarn_check_dep_load(pid_65, &mem, YARN_T_VALUE_2);
-  }  
-
-}
-END_TEST
-
 
 
 Suite* yarn_dep_suite (void) {
@@ -429,11 +400,6 @@ Suite* yarn_dep_suite (void) {
   tcase_add_test(tc_seq, t_dep_seq_commit);
   tcase_add_test(tc_seq, t_dep_seq_rollback);
   suite_add_tcase(s, tc_seq);
-
-  TCase* tc_misc = tcase_create("yarn_dep.misc");
-  tcase_add_checked_fixture(tc_misc, t_dep_base_setup, t_dep_base_teardown);
-  tcase_add_test(tc_misc, t_dep_misc_edge);
-  suite_add_tcase(s, tc_misc);
 
   TCase* tc_para = tcase_create("yarn_dep.parallel");
   tcase_add_checked_fixture(tc_para, t_dep_para_setup, t_dep_para_teardown);

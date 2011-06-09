@@ -52,8 +52,11 @@ Returns the next epoch that should be executed. This may either be a rollbacked 
 the status is to \c yarn_epoch_rollback or a newly generated epoch if the status is set to
 \c yarn_epoch_waiting.
 */
-yarn_word_t yarn_epoch_next(enum yarn_epoch_status* old_status);
+bool yarn_epoch_next(yarn_word_t* next_epoch, enum yarn_epoch_status* old_status);
 
+
+bool yarn_epoch_is_finished();
+void yarn_epoch_stop(yarn_word_t epoch);
 
 /*!
 Contrary to what the name might suggests, these don't do the actual commits and rollback.
@@ -61,7 +64,7 @@ They only update or prepare the epoch data structures.
 */
 void yarn_epoch_do_rollback(yarn_word_t start);
 void yarn_epoch_rollback_done(yarn_word_t epoch);
-bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task, void** data);
+bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task);
 void yarn_epoch_commit_done(yarn_word_t epoch);
 void yarn_epoch_set_done(yarn_word_t epoch);
 
@@ -74,8 +77,6 @@ any ways so it's up to the client to set and free them as nessecary.
 */
 void* yarn_epoch_get_task (yarn_word_t epoch);
 void yarn_epoch_set_task (yarn_word_t epoch, void* task);
-void* yarn_epoch_get_data(yarn_word_t epoch);
-void yarn_epoch_set_data(yarn_word_t epoch, void* data);
 
 /*!
 Returns a bitfield with the bit sets for every epoch that is in a rollback state.
