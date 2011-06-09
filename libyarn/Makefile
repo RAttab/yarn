@@ -26,7 +26,7 @@
 
 # The pre-processor and compiler options.
 MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
-            -L/usr/local/lib/ \
+            -L/usr/local/lib/ -lrt \
             -D _GNU_SOURCE=1 -pthread \
             -Isrc -Iinclude
 

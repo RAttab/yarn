@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define YARN_DBG 1
+#define YARN_DBG 0
 #include "dbg.h"
 
 
@@ -314,7 +314,7 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
   (void) pool_id;
   (void) task;
 
-  for (yarn_word_t i = 0; i < 400; ++i) {
+  for (yarn_word_t i = 0; i < 2000; ++i) {
     
     DBG printf("<%zu> - NEXT - START\n", pool_id);
 
@@ -348,7 +348,7 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
 	DBG printf("<%zu> - ROLLBACK=%zu - END\n", pool_id, epoch+1);	  
       }
       
-      if (i == 200 + pool_id) {
+      if (i == 1000 + pool_id) {
 	DBG printf("[%zu] - STOP\n", epoch);
 	yarn_epoch_stop(epoch);
       }
@@ -374,11 +374,7 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
 
 START_TEST(t_epoch_para) {
   yarn_tpool_init();
-  // The more we run the better our chances to shake out a sync problem.
-  //  for (int i = 0; i < 100; ++i) {
-    yarn_tpool_exec(t_epoch_para_worker, NULL);
-    
-    // }
+  yarn_tpool_exec(t_epoch_para_worker, NULL);
   yarn_tpool_destroy();
 }
 END_TEST

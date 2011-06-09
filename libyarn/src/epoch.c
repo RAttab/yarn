@@ -140,8 +140,8 @@ static inline bool inc_epoch_next (yarn_word_t* next_epoch) {
 
     struct epoch_info* info = get_epoch_info(cur_next);
     if (!retry) {
-      // The epoch is not yet ready so wait for it.
-      if (yarn_readv(&info->status) == yarn_epoch_pending_rollback) {
+      enum yarn_epoch_status status = yarn_readv(&info->status);
+      if (status == yarn_epoch_pending_rollback) {
 	retry = true;
       }
     }
@@ -152,16 +152,10 @@ static inline bool inc_epoch_next (yarn_word_t* next_epoch) {
 
       if (is_stop_set(stop_epoch) && yarn_timestamp_comp(cur_next, stop_epoch) >= 0) {
 	if (stop_epoch == first_epoch) {
-	  printf("STOP - stop=%zu, first=%zu, set=%d\n", 
-		 stop_epoch, first_epoch, is_stop_set(stop_epoch));
 	  return false;
 	}
 
 	else {
-	  if (attempts++ <= 5) {
-	    printf("STOP - RETRY - stop=%zu, first=%zu, set=%d\n", 
-		   stop_epoch, first_epoch, is_stop_set(stop_epoch));
-	  }
 	  retry = true;
 	}
       }
@@ -189,22 +183,22 @@ bool yarn_epoch_next(yarn_word_t* next_epoch, enum yarn_epoch_status* old_status
   YARN_CHECK_RET0(pthread_rwlock_rdlock(&g_rollback_lock));
   DBG printf("\t\t\t\t\t\tNEXT - LOCK\n");
 
-  if (!inc_epoch_next(next_epoch)) {
-    return false;
+  bool ret = inc_epoch_next(next_epoch);
+  if (ret) {
+    struct epoch_info* info = get_epoch_info(*next_epoch);
+    
+    *old_status = yarn_readv(&info->status);
+    yarn_writev(&info->status, yarn_epoch_executing);
+    
+    DBG printf("[%zu] - EXECUTING - old_status=%d\n", *next_epoch, *old_status);
+    assert(*old_status == yarn_epoch_commit || *old_status == yarn_epoch_rollback);
+    
   }
-  
-  struct epoch_info* info = get_epoch_info(*next_epoch);
-
-  *old_status = yarn_readv(&info->status);
-  yarn_writev(&info->status, yarn_epoch_executing);
-
-  DBG printf("[%zu] - EXECUTING - old_status=%d\n", *next_epoch, *old_status);
-  assert(*old_status == yarn_epoch_commit || *old_status == yarn_epoch_rollback);
 
   DBG printf("\t\t\t\t\t\tNEXT - UNLOCK\n");
   YARN_CHECK_RET0(pthread_rwlock_unlock(&g_rollback_lock));
 
-  return true;
+  return ret;
 }
 
 
@@ -218,29 +212,36 @@ static inline bool is_stop_set(yarn_word_t stop_epoch) {
 void yarn_epoch_stop(yarn_word_t stop_epoch) {
   yarn_word_t old_stop;
   yarn_word_t new_stop;
+  bool is_set;
+
   do {
     old_stop = yarn_readv(&g_epoch_stop);
-
-    if (is_stop_set(old_stop) && yarn_timestamp_comp(old_stop, stop_epoch) < 0) {
-      return;
-    }
 
     // stop is used like an end bound. 
     // This is to keep it consistent with first which simplifies things.
     new_stop = stop_epoch+1;
 
+    is_set = is_stop_set(old_stop);
+    if (is_set && yarn_timestamp_comp(old_stop, new_stop) < 0) {
+      return;
+    }
+
   } while (yarn_casv(&g_epoch_stop, old_stop, new_stop) != old_stop);
 
-  printf("\t\t\t\t\t\t\t\tSTOP_SET[%zu]\n", stop_epoch+1);
+  DBG printf("\t\t\t\t\t\t\t\tSTOP_SET[%zu] =END= old=%zu, is_set=%d\n", 
+	 new_stop, old_stop, is_set);
 }
 
 static inline void rollback_stop (yarn_word_t rollback_epoch) {
   yarn_word_t old_stop;
   yarn_word_t new_stop;
+  bool is_set;
+
   do {
     old_stop = yarn_readv(&g_epoch_stop);
     
-    if (!is_stop_set(old_stop)) {
+    is_set = is_stop_set(old_stop);
+    if (!is_set) {
       return;
     }
     if (yarn_timestamp_comp(old_stop, rollback_epoch) <= 0) {
@@ -250,7 +251,8 @@ static inline void rollback_stop (yarn_word_t rollback_epoch) {
     new_stop = yarn_readv(&g_epoch_first) -1;
   } while (yarn_casv(&g_epoch_stop, old_stop, new_stop) != old_stop);
 
-  printf("\t\t\t\t\t\t\t\tSTOP_ROLLBACK[%zu]\n", new_stop);
+  DBG printf("\t\t\t\t\t\t\t\tSTOP_ROLLBACK[%3zu] =END= old=%zu, is_set%d\n", 
+	 new_stop, old_stop, is_set);
 }
 
 /*
@@ -260,17 +262,21 @@ static inline void rollback_stop (yarn_word_t rollback_epoch) {
 static inline void update_stop () {
   yarn_word_t old_stop;
   yarn_word_t new_stop;
+  bool is_set;
+
   do {
     old_stop = yarn_readv(&g_epoch_stop);
 
-    if (is_stop_set(old_stop)) {
+    is_set = is_stop_set(old_stop);
+    if (is_set) {
       return;
     }
     
     new_stop = yarn_readv(&g_epoch_first) -1;
   } while(yarn_casv(&g_epoch_stop, old_stop, new_stop) != old_stop);
 
-  printf("\t\t\t\t\t\t\t\tSTOP_UPDATE[%zu]\n", new_stop);
+  DBG printf("\t\t\t\t\t\t\t\tSTOP_UPDATE[%3zu] =END= old=%zu, is_set=%d\n", 
+	 new_stop, old_stop, is_set);
 }
 
 
@@ -384,25 +390,17 @@ bool yarn_epoch_get_next_commit(yarn_word_t* epoch, void** task) {
 
     // We can tolerate false positives on this check.    
     if (to_commit == next) {
-      printf("GET_NEXT - next=%zu, to_commit=%zu\n",
-	     next, to_commit);
       return false;
     }
 
     info = get_epoch_info(to_commit);
     enum yarn_epoch_status status = yarn_readv(&info->status);
     if (status != yarn_epoch_done) {
-      printf("GET_NEXT - next=%zu, to_commit=%zu, status=%d\n", 
-	     next, to_commit, status);
       return false;
     }
 
     yarn_word_t stop_epoch = yarn_readv(&g_epoch_stop);    
     if (is_stop_set(stop_epoch) && stop_epoch == to_commit) {
-
-      yarn_word_t first = yarn_readv(&g_epoch_first);
-      printf("GET_NEXT - next=%zu, stop=%zu, to_commit=%zu, first=%zu\n",
-	     next, stop_epoch, to_commit, first);
       return false;
     }
       

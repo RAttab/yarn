@@ -15,7 +15,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#define YARN_DBG 1
+#define YARN_DBG 0
 #include "dbg.h"
 
 
@@ -306,41 +306,53 @@ ret_t t_dep_para_full_calc(yarn_word_t pool_id) {
   return err;
 }
 
+
 bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
   (void) task;
 
   while(true) {
     enum yarn_epoch_status old_status;
     yarn_word_t epoch;
+    DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> NEXT   => START\n", 
+	       get_rel_time(), pool_id);
     if (!yarn_epoch_next(&epoch, &old_status)) {
-      DBG printf("\t\t\t\t\t\t\t\t<%zu> STOP\n", pool_id);
+      DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> STOP\n", get_rel_time(), pool_id);
       break;
     }
 
     if (old_status == yarn_epoch_rollback) {
-      DBG printf("\t\t\t\t\t\t\t\t<%zu> NEXT   => [%3zu] - ROLLBACK\n", pool_id, epoch);
+      DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> NEXT   => [%3zu] - ROLLBACK\n", 
+		 get_rel_time(), pool_id, epoch);
       yarn_dep_rollback(epoch);
       yarn_epoch_rollback_done(epoch);
     }
     else {
-      DBG printf("\t\t\t\t\t\t\t\t<%zu> NEXT   => [%3zu]\n", pool_id, epoch);
+      DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> NEXT   => [%3zu]\n", 
+		 get_rel_time(), pool_id, epoch);
     }
 
     bool init_ret = yarn_dep_thread_init(pool_id, epoch);
     if (!init_ret) goto init_error;
     
+    DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> CALC   => [%3zu]\n", 
+	       get_rel_time(), pool_id, epoch);
+
     ret_t calc_ret = t_dep_para_full_calc(pool_id);
     if (calc_ret == done) {
+      DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> F_STOP => [%3zu]\n", 
+		 get_rel_time(), pool_id, epoch);
       yarn_epoch_stop(epoch);
     }
 
-    DBG printf("\t\t\t\t\t\t\t\t<%zu> DONE   => [%3zu]\n", pool_id, epoch);
+    DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> DONE   => [%3zu]\n", 
+	       get_rel_time(), pool_id, epoch);
     yarn_epoch_set_done(epoch);
     yarn_dep_thread_destroy(pool_id);
     yarn_word_t commit_epoch;
     void* task;
     while (yarn_epoch_get_next_commit(&commit_epoch, &task)) {
-      DBG printf("\t\t\t\t\t\t\t\t<%zu> COMMIT => [%3zu]\n", pool_id, commit_epoch);
+      DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> COMMIT => [%3zu]\n", 
+		 get_rel_time(), pool_id, commit_epoch);
       yarn_dep_commit(commit_epoch);
       yarn_epoch_commit_done(commit_epoch);
     }
@@ -366,10 +378,14 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
 
 START_TEST(t_dep_para_full) {
 
+  set_base_time();
+
   bool ret = yarn_tpool_exec(t_dep_para_full_worker, NULL);
   fail_if (!ret);
   fail_if (g_counter.acc != g_counter.r, 
 	   "answer=%zu, expected=%zu", g_counter.acc, g_counter.r);
+  fail_if (g_counter.i != g_counter.n+1,
+	   "i=%zu, expected=%zu", g_counter.i, g_counter.n+1);
   
   yarn_word_t commit_epoch;
   void* task;
@@ -403,6 +419,7 @@ Suite* yarn_dep_suite (void) {
 
   TCase* tc_para = tcase_create("yarn_dep.parallel");
   tcase_add_checked_fixture(tc_para, t_dep_para_setup, t_dep_para_teardown);
+  // tcase_set_timeout(tc_para, 1000000000);
   tcase_add_test(tc_para, t_dep_para_full);
   suite_add_tcase(s, tc_para);
 

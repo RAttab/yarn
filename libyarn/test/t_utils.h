@@ -16,6 +16,13 @@ error messages of the fail_xxx macros.
 #include <bits.h>
 
 
+// Time related stuff
+#define STR_TS "(%zums) "
+void set_base_time();
+long get_rel_time();
+
+
+
 // Testing values that is adjusted based on the machine's word size.
 #ifdef YARN_WORD_64
 #  define YARN_T_VALUE_1 0xAAAAAAAAAAAAAAAA // 1010
@@ -28,9 +35,6 @@ error messages of the fail_xxx macros.
 #  define YARN_T_VALUE_3 0x99999999
 #  define YARN_T_VALUE_4 0x66666666
 #endif
-
-
-
 
 
 // yarn_epoch utilities.
