@@ -24,7 +24,7 @@ typedef yarn_atomic_var yarn_timestamp_t;
 
 
 // Sets the highest order bit which is used as a flag to detect overflows.
-#define YARN_TIMESTAMP_FLAG_MASK (3ULL << (sizeof(yarn_word_t)*8-2))
+#define YARN_TIMESTAMP_FLAG_MASK (3ULL << (YARN_WORD_BIT_SIZE - 2))
 
 
 //!
@@ -60,26 +60,26 @@ inline bool yarn_timestamp_inc_eq (yarn_timestamp_t* ts, yarn_word_t old_val) {
 Returns 0 if the timestamps are equal, a negative value if old_val is smaller then new_val
 and a positive value if new_val is smaller then old_val.
 */
-inline int yarn_timestamp_comp (yarn_word_t old_val, yarn_word_t new_val) {
-  if (old_val == new_val) {
+inline int yarn_timestamp_comp (yarn_word_t a, yarn_word_t b) {
+  if (a == b) {
     return 0;
   }
 
-  const yarn_word_t old_mask = old_val & YARN_TIMESTAMP_FLAG_MASK;
-  const yarn_word_t new_mask = new_val & YARN_TIMESTAMP_FLAG_MASK;
+  const yarn_word_t a_mask = a & YARN_TIMESTAMP_FLAG_MASK;
+  const yarn_word_t b_mask = b & YARN_TIMESTAMP_FLAG_MASK;
 
   // This check only works in reasonable cases.
-  if (old_mask == new_mask) {
-    return old_val < new_val ? -1 : 1;
+  if (a_mask == b_mask) {
+    return a < b ? -1 : 1;
   }
-  else if (old_mask == 0) {
-    return new_mask == YARN_TIMESTAMP_FLAG_MASK ? 1 : -1;
+  else if (a_mask == 0) {
+    return b_mask == YARN_TIMESTAMP_FLAG_MASK ? 1 : -1;
   }
-  else if (new_mask == 0) {
-    return old_mask == YARN_TIMESTAMP_FLAG_MASK ? -1 : 1;
+  else if (b_mask == 0) {
+    return a_mask == YARN_TIMESTAMP_FLAG_MASK ? -1 : 1;
   }
   else {
-    return old_mask < new_mask ? -1 : 1;
+    return a_mask < b_mask ? -1 : 1;
   }
 }
 
