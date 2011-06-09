@@ -4,7 +4,9 @@
 # Executes the tests until it fails. Useful to quickly reproduce sporadic issues.
 #
 
+c=0
 while [ $? -eq 0 ]; do
-    echo Trying again...
-    ./check_libyarn > err.log
+    c=$(($c+1))
+    echo -ne "Testing attempt: $c\r"
+    ./check_libyarn > out.log
 done
