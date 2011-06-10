@@ -20,25 +20,31 @@
 #include "dbg.h"
 
 
+static yarn_word_t g_epoch_max;
+
 static void t_epoch_setup(void) {
+  yarn_tpool_init();
   yarn_epoch_init();
+  g_epoch_max = yarn_epoch_max();
 }
 
 
 static void t_epoch_teardown(void) {
   yarn_epoch_destroy();
+  yarn_tpool_destroy();
 }
 
 
 
 
 START_TEST(t_epoch_next) {
-  const yarn_word_t IT_COUNT = sizeof(yarn_word_t)*8/2;
+  const yarn_word_t IT_COUNT = g_epoch_max / 2;
   
   for (yarn_word_t i = 0; i < IT_COUNT; ++i) {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch;
     yarn_epoch_next(&next_epoch, &old_status);
+
     fail_if(next_epoch != i, "next_epoch=%zu, i=%zu", next_epoch, i);
     t_yarn_check_epoch_status(next_epoch, yarn_epoch_executing);
     t_yarn_check_status(old_status, yarn_epoch_commit);
@@ -48,7 +54,7 @@ END_TEST
 
 
 START_TEST(t_epoch_rollback_executing) {
-  void* VALUE = (void*) 0xDEADBEEF;
+  void* VALUE = (void*) YARN_T_VALUE_1;
   
   enum yarn_epoch_status old_status;
   yarn_word_t epoch;
@@ -65,8 +71,9 @@ START_TEST(t_epoch_rollback_executing) {
 }
 END_TEST
 
+
 START_TEST(t_epoch_rollback_done) {
-  void* VALUE = (void*) 0xDEADBEEF;
+  void* VALUE = (void*) YARN_T_VALUE_1;
 
   enum yarn_epoch_status old_status;
   yarn_word_t epoch;
@@ -83,10 +90,11 @@ START_TEST(t_epoch_rollback_done) {
 }
 END_TEST
 
+
 START_TEST(t_epoch_rollback_range) {
-  void* VALUE = (void*) 0xDEADBEEF;
-  
-  for (int i = 0; i < 8; ++i) {
+  void* VALUE = (void*) YARN_T_VALUE_1;
+
+  for (yarn_word_t i = 0; i < g_epoch_max/2; ++i) {
     enum yarn_epoch_status old_status;
     yarn_word_t epoch;
     yarn_epoch_next(&epoch, &old_status);
@@ -94,14 +102,15 @@ START_TEST(t_epoch_rollback_range) {
     yarn_epoch_set_done(epoch);
   }
 
-  yarn_epoch_do_rollback(4);
+  const yarn_word_t rb_epoch = g_epoch_max/4;
+  yarn_epoch_do_rollback(rb_epoch);
 
-  for (yarn_word_t epoch = 0; epoch < 4; ++epoch) {
+  for (yarn_word_t epoch = 0; epoch < rb_epoch; ++epoch) {
     t_yarn_check_epoch_status(epoch, yarn_epoch_done);
     t_yarn_check_epoch_data(epoch, VALUE);
   }
 
-  for (yarn_word_t epoch = 4; epoch < 8; ++epoch) {
+  for (yarn_word_t epoch = rb_epoch; epoch < g_epoch_max/2; ++epoch) {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch;
     yarn_epoch_next(&next_epoch, &old_status);
@@ -112,7 +121,7 @@ START_TEST(t_epoch_rollback_range) {
     t_yarn_check_epoch_data(epoch, VALUE);
   }
 
-  for (int i = 0; i < 8; ++i) {
+  for (yarn_word_t i = 0; i < g_epoch_max/2; ++i) {
     enum yarn_epoch_status old_status;
     yarn_word_t next_epoch;
     yarn_epoch_next(&next_epoch, &old_status);
@@ -124,8 +133,8 @@ START_TEST(t_epoch_rollback_range) {
 END_TEST
 
 START_TEST(t_epoch_commit) {
-  const int IT_COUNT = sizeof(yarn_word_t)*8/2;
-  void* VALUE = (void*) 0xDEADBEEF;
+  const int IT_COUNT = g_epoch_max / 2;
+  void* VALUE = (void*) YARN_T_VALUE_1;
   yarn_word_t epoch_to_commit;
   void* task;
 
@@ -190,14 +199,14 @@ START_TEST(t_epoch_stop_basic) {
   enum yarn_epoch_status status;
   yarn_word_t epoch;
 
-  for (yarn_word_t i = 0; i < YARN_EPOCH_MAX / 2; ++i) {
+  for (yarn_word_t i = 0; i < g_epoch_max / 2; ++i) {
     bool ret = yarn_epoch_next(&epoch, &status);
     fail_if(!ret);
     yarn_epoch_set_done(epoch);
   }
 
-  yarn_word_t stop_epoch = YARN_EPOCH_MAX / 4;
-  yarn_epoch_stop((YARN_EPOCH_MAX / 2) - 1);
+  yarn_word_t stop_epoch = g_epoch_max / 4;
+  yarn_epoch_stop((g_epoch_max / 2) - 1);
   yarn_epoch_stop(stop_epoch);
 
   // calling next here will block the thread so we can't test that.
@@ -229,7 +238,7 @@ START_TEST(t_epoch_stop_rollback_before) {
   yarn_word_t epoch;
   enum yarn_epoch_status status;
   
-  const yarn_word_t stop_epoch = YARN_EPOCH_MAX / 2;
+  const yarn_word_t stop_epoch = g_epoch_max / 2;
 
   for (yarn_word_t i = 0; i <= stop_epoch; ++i) {
     yarn_epoch_next(&epoch, &status);
@@ -238,7 +247,7 @@ START_TEST(t_epoch_stop_rollback_before) {
 
   yarn_epoch_stop(stop_epoch);
 
-  const yarn_word_t rollback_epoch = YARN_EPOCH_MAX / 4;
+  const yarn_word_t rollback_epoch = g_epoch_max / 4;
   yarn_epoch_do_rollback(rollback_epoch);
 
   for (yarn_word_t i = rollback_epoch; i <= stop_epoch; ++i) {
@@ -267,9 +276,9 @@ START_TEST(t_epoch_stop_rollback_after) {
   yarn_word_t epoch;
   enum yarn_epoch_status status;
   
-  const yarn_word_t stop_epoch = YARN_EPOCH_MAX / 4;
+  const yarn_word_t stop_epoch = g_epoch_max / 4;
 
-  for (yarn_word_t i = 0; i <= YARN_EPOCH_MAX / 2; ++i) {
+  for (yarn_word_t i = 0; i <= g_epoch_max / 2; ++i) {
     yarn_epoch_next(&epoch, &status);
     yarn_epoch_set_done(epoch);
   }

@@ -50,8 +50,10 @@ static struct yarn_pmem* g_addr_info_alloc;
 //! \todo Probably won't only hold epochs.
 static struct yarn_pstore* g_epoch_store;
 
+static yarn_word_t g_epoch_max;
+
 // Heads for the addr_info linked list of each epoch.
-static struct addr_info* g_info_list[YARN_EPOCH_MAX];
+static struct addr_info** g_info_list;
 
 // Quick element access to bypass the hash table.
 static struct addr_info** g_info_index;
@@ -103,8 +105,8 @@ static bool addr_info_construct(void* data) {
   int ret = pthread_mutex_init(&info->lock, NULL);
   if (ret) goto mutex_error;
 
-  info->info_list = (struct addr_info**) (info->write_buffer + YARN_EPOCH_MAX);
-  for (size_t i = 0; i < YARN_EPOCH_MAX; ++i) {
+  info->info_list = (struct addr_info**) (info->write_buffer + g_epoch_max);
+  for (size_t i = 0; i < g_epoch_max; ++i) {
     info->info_list[i] = NULL;
   }
 
@@ -134,6 +136,8 @@ static void map_item_destruct (void* data) {
 
 
 bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size) {
+  g_epoch_max = yarn_epoch_max();
+
   g_dependency_map = yarn_map_init(ws_size);
   if (!g_dependency_map) goto map_error;
 
@@ -144,7 +148,10 @@ bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size) {
 
   g_epoch_store = yarn_pstore_init();
   if (!g_epoch_store) goto epoch_store_error;
-  for (size_t i = 0; i < YARN_EPOCH_MAX; ++i) {
+
+  g_info_list = (struct addr_info**) malloc(g_epoch_max * sizeof(struct addr_info*));
+  if (!g_info_list) goto list_alloc_error;
+  for (size_t i = 0; i < g_epoch_max; ++i) {
     g_info_list[i] = NULL;
   }
 
@@ -160,6 +167,8 @@ bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size) {
   
   free(g_info_index);
  index_alloc_error:
+  free(g_info_list);
+ list_alloc_error:
   yarn_pstore_destroy(g_epoch_store);
  epoch_store_error:
   yarn_pmem_destroy(g_addr_info_alloc);
@@ -182,6 +191,7 @@ void yarn_dep_global_destroy (void) {
   }
 
   yarn_pstore_destroy(g_epoch_store);
+  free(g_info_list);
   free(g_info_index);
 }
 
@@ -326,14 +336,14 @@ bool yarn_dep_load_fast (yarn_word_t pool_id,
 
 
 void yarn_dep_commit (yarn_word_t epoch) {
-  const yarn_word_t epoch_index = YARN_BIT_INDEX(epoch);
-  const yarn_word_t epoch_mask = YARN_BIT_MASK(epoch);
+  const yarn_word_t epoch_index = YARN_BIT_INDEX(epoch, g_epoch_max);
+  const yarn_word_t epoch_mask = YARN_BIT_MASK(epoch, g_epoch_max);
 
   struct addr_info* info;
   while ((info = info_list_pop(epoch)) != NULL) {
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
 
-    yarn_word_t flag_mask = yarn_bit_mask_range(yarn_epoch_first(), epoch+1);
+    yarn_word_t flag_mask = yarn_bit_mask_range(yarn_epoch_first(), epoch+1, g_epoch_max);
     info->read_flags &= ~flag_mask;
 
     if (info->write_flags & epoch_mask) {
@@ -366,8 +376,8 @@ void yarn_dep_rollback (yarn_word_t epoch) {
   while ((info = info_list_pop(epoch)) != NULL) {    
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
     
-    info->write_flags = YARN_BIT_CLEAR(info->write_flags, epoch);
-    info->read_flags = YARN_BIT_CLEAR(info->read_flags, epoch);    
+    info->write_flags = YARN_BIT_CLEAR(info->write_flags, epoch, g_epoch_max);
+    info->read_flags = YARN_BIT_CLEAR(info->read_flags, epoch, g_epoch_max);    
 
     DBG {
       yarn_word_t rb_mask = ~yarn_epoch_rollback_flags();
@@ -385,8 +395,8 @@ void yarn_dep_rollback (yarn_word_t epoch) {
 
 static inline size_t addr_info_size () {
   size_t size = sizeof(struct addr_info);
-  size += sizeof(yarn_word_t) * YARN_EPOCH_MAX;
-  size += sizeof(struct addr_info*) * YARN_EPOCH_MAX;
+  size += sizeof(yarn_word_t) * g_epoch_max;
+  size += sizeof(struct addr_info*) * g_epoch_max;
   return size;
 }
 
@@ -399,13 +409,13 @@ static inline yarn_word_t get_epoch(yarn_word_t pool_id) {
 static inline yarn_word_t index_to_epoch_after (yarn_word_t base_epoch, 
 						yarn_word_t index) 
 {
-  const yarn_word_t base_index = YARN_BIT_INDEX(base_epoch);
+  const yarn_word_t base_index = YARN_BIT_INDEX(base_epoch, g_epoch_max);
   
   if (base_index <= index) {
     return base_epoch + (index - base_index);
   }
   else {
-    return base_epoch + (YARN_EPOCH_MAX - base_index) + index;
+    return base_epoch + (g_epoch_max - base_index) + index;
   }
 }
 
@@ -413,13 +423,13 @@ static inline yarn_word_t index_to_epoch_after (yarn_word_t base_epoch,
 static inline yarn_word_t index_to_epoch_before (yarn_word_t base_epoch, 
 						 yarn_word_t index) 
 {
-  const yarn_word_t base_index = YARN_BIT_INDEX(base_epoch);
+  const yarn_word_t base_index = YARN_BIT_INDEX(base_epoch, g_epoch_max);
   
   if (base_index >= index) {
     return base_epoch - (base_index - index);
   }
   else {
-    return base_epoch - base_index - (YARN_EPOCH_MAX - index);
+    return base_epoch - base_index - (g_epoch_max - index);
   }
 }
 
@@ -472,7 +482,7 @@ static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id,
     tmp_info = NULL;
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
 
-    const yarn_word_t mask = YARN_BIT_MASK(epoch);
+    const yarn_word_t mask = YARN_BIT_MASK(epoch, g_epoch_max);
     if ((info->read_flags & mask) == 0 && (info->write_flags & mask) == 0) {
       info_list_push(epoch, info);
     }
@@ -497,14 +507,14 @@ static inline void release_addr_info (struct addr_info* info) {
 
 
 static inline void info_list_push (yarn_word_t epoch, struct addr_info* info) {
-  const yarn_word_t index = YARN_BIT_INDEX(epoch);
+  const yarn_word_t index = YARN_BIT_INDEX(epoch, g_epoch_max);
 
   info->info_list[index] = g_info_list[index];
   g_info_list[index] = info;
 }
 
 static inline struct addr_info* info_list_pop (yarn_word_t epoch) {
-  const yarn_word_t index = YARN_BIT_INDEX(epoch);
+  const yarn_word_t index = YARN_BIT_INDEX(epoch, g_epoch_max);
   struct addr_info* head = g_info_list[index];
 
   if (head == NULL) {
@@ -527,9 +537,9 @@ static inline void store_to_wbuf (struct addr_info* info,
 				  size_t size) 
 {
   (void) dest;
-  const yarn_word_t epoch_index = YARN_BIT_INDEX(epoch);
+  const yarn_word_t epoch_index = YARN_BIT_INDEX(epoch, g_epoch_max);
 
-  info->write_flags = YARN_BIT_SET(info->write_flags, epoch);
+  info->write_flags = YARN_BIT_SET(info->write_flags, epoch, g_epoch_max);
   memcpy(&info->write_buffer[epoch_index], src, size);
 
   DBG {
@@ -548,7 +558,7 @@ static inline void load_from_wbuf (struct addr_info* info,
 				   void* dest, 
 				   size_t size)
 {
-  info->read_flags = YARN_BIT_SET(info->read_flags, epoch);
+  info->read_flags = YARN_BIT_SET(info->read_flags, epoch, g_epoch_max);
   yarn_word_t write_flags = info->write_flags;
 
   // Could realease the lock here but requires some extra checks.
@@ -557,9 +567,9 @@ static inline void load_from_wbuf (struct addr_info* info,
   write_flags &= rollback_mask;
 
   const yarn_word_t first_epoch = yarn_epoch_first();
-  const yarn_word_t first_index = YARN_BIT_INDEX(first_epoch);
+  const yarn_word_t first_index = YARN_BIT_INDEX(first_epoch, g_epoch_max);
   const yarn_word_t last_epoch = epoch+1;
-  const yarn_word_t last_index = YARN_BIT_INDEX(epoch+1);
+  const yarn_word_t last_index = YARN_BIT_INDEX(epoch+1, g_epoch_max);
 
 
   yarn_word_t flags;
@@ -567,14 +577,14 @@ static inline void load_from_wbuf (struct addr_info* info,
 
   if (first_index < last_index) {
     // Must use the epochs here (the index might be equal but the epochs might not).
-    mask = yarn_bit_mask_range(first_epoch, last_epoch);
+    mask = yarn_bit_mask_range(first_epoch, last_epoch, g_epoch_max);
     flags = write_flags & mask;
   }
   else {
-    mask = yarn_bit_mask_range(0, last_index);
+    mask = yarn_bit_mask_range(0, last_index, g_epoch_max);
     flags = write_flags & mask;
     if (flags == 0) {
-      yarn_word_t second_mask = yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
+      yarn_word_t second_mask = yarn_bit_mask_range(first_index, g_epoch_max, g_epoch_max);
       mask |= second_mask;
       flags = write_flags & second_mask;
     }
@@ -630,18 +640,18 @@ static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flag
   const yarn_word_t rollback_mask = ~yarn_epoch_rollback_flags();  
   read_flags &= rollback_mask;
 
-  const yarn_word_t first_index = YARN_BIT_INDEX(first_epoch);
-  const yarn_word_t last_index = YARN_BIT_INDEX(last_epoch);
+  const yarn_word_t first_index = YARN_BIT_INDEX(first_epoch, g_epoch_max);
+  const yarn_word_t last_index = YARN_BIT_INDEX(last_epoch, g_epoch_max);
 
   yarn_word_t flags;
   if (first_index < last_index) {
     // Must use the epochs here (the index might be equal but the epochs might not).
-    flags = read_flags & yarn_bit_mask_range(first_epoch, last_epoch);
+    flags = read_flags & yarn_bit_mask_range(first_epoch, last_epoch, g_epoch_max);
   }
   else {
-    flags = read_flags & yarn_bit_mask_range(first_index, YARN_EPOCH_MAX);
+    flags = read_flags & yarn_bit_mask_range(first_index, g_epoch_max, g_epoch_max);
     if (flags == 0) {
-      flags = read_flags & yarn_bit_mask_range(0, last_index);
+      flags = read_flags & yarn_bit_mask_range(0, last_index, g_epoch_max);
     }
   }
 
@@ -679,7 +689,7 @@ static inline void dump_info(struct addr_info* info) {
   */
   /*
   printf (", wbuf={");
-  for (yarn_word_t i = 0; i < YARN_EPOCH_MAX; ++i) {
+  for (yarn_word_t i = 0; i < g_epoch_max; ++i) {
     if ((info->write_flags & YARN_BIT_MASK(i)) != 0) {
       printf("%zu -> "YARN_SHEX", ", i, YARN_AHEX(info->write_buffer[i]));
     }
@@ -695,7 +705,7 @@ static inline void dump_flags(yarn_word_t f) {
   while (f != 0) {
 
     b = yarn_bit_log2(f);
-    f = YARN_BIT_CLEAR(f, b);
+    f = YARN_BIT_CLEAR(f, b, g_epoch_max);
 
     printf("%zu", b);
     if (f != 0) printf(",");

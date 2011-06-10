@@ -17,9 +17,6 @@ era of 30+ core CPUs then this class will need to be updated so that it works be
 #include <types.h>
 
 
-#define YARN_EPOCH_MAX (sizeof(yarn_word_t)*8)
-
-
 enum yarn_epoch_status {
   //! Currently executing.
   yarn_epoch_executing = 1,
@@ -42,6 +39,9 @@ enum yarn_epoch_status {
 bool yarn_epoch_init(void);
 //! \warning Not thread safe.
 void yarn_epoch_destroy(void);
+
+//! Returns the maximum number epochs that can be active at any one time.
+yarn_word_t yarn_epoch_max(void);
 
 //! Bounds for the active epochs.
 yarn_word_t yarn_epoch_first(void);

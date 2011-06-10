@@ -13,6 +13,7 @@ the epochs to infinity and still keep the comparaison coherent.
 
 #include <types.h>
 #include <helper.h>
+#include <tpool.h>
 #include "timestamp.h"
 #include "atomic.h"
 #include "bits.h"
@@ -33,8 +34,9 @@ struct epoch_info {
 };
 
 
+static yarn_word_t g_epoch_max;
+
 static struct epoch_info* g_epoch_list;
-static const size_t g_epoch_list_size = sizeof(yarn_word_t)*8;
 
 // Cursors for the g_epoch_list.
 static yarn_atomic_var g_epoch_first;
@@ -61,7 +63,7 @@ static inline void update_stop ();
 
 
 static inline size_t get_epoch_index (yarn_word_t epoch) {
-  return YARN_BIT_INDEX(epoch);
+  return YARN_BIT_INDEX(epoch, g_epoch_max);
 }
 
 static inline struct epoch_info* get_epoch_info (yarn_word_t epoch) {
@@ -75,10 +77,11 @@ bool yarn_epoch_init(void) {
   int ret = pthread_rwlock_init(&g_rollback_lock, NULL);
   if (ret) goto lock_error;
 
-  g_epoch_list = malloc(g_epoch_list_size * sizeof(struct epoch_info));
-  if (!g_epoch_list) goto alloc_error;
+  g_epoch_max = yarn_epoch_max();
 
-  for (size_t i = 0; i < g_epoch_list_size; ++i) {
+  g_epoch_list = malloc(g_epoch_max * sizeof(struct epoch_info));
+  if (!g_epoch_list) goto alloc_error;
+  for (size_t i = 0; i < g_epoch_max; ++i) {
     yarn_writev(&g_epoch_list[i].status, yarn_epoch_commit);
     g_epoch_list[i].task = NULL;
   }
@@ -107,6 +110,12 @@ void yarn_epoch_destroy(void) {
 
 
 
+yarn_word_t yarn_epoch_max(void) {
+  yarn_word_t max_size = YARN_WORD_BIT_SIZE;
+  yarn_word_t optimal_size = yarn_tpool_size()*2;
+
+  return optimal_size < max_size ? optimal_size : max_size;
+}
 
 
 yarn_word_t yarn_epoch_first(void) {
@@ -340,7 +349,7 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
       yarn_word_t new_flag;
       do {
 	old_flag = yarn_readv(&g_rollback_flag);
-	new_flag = YARN_BIT_SET(old_flag, epoch);
+	new_flag = YARN_BIT_SET(old_flag, epoch, g_epoch_max);
       } while (yarn_casv(&g_rollback_flag, old_flag, new_flag) != old_flag);
 
       DBG printf("[---] ROLLBACK -> SET [%3zu] - flag="YARN_SHEX"\n", 
@@ -368,7 +377,7 @@ void yarn_epoch_rollback_done(yarn_word_t epoch) {
   yarn_word_t new_flag;
   do {
     old_flag = yarn_readv(&g_rollback_flag);
-    new_flag = YARN_BIT_CLEAR(old_flag, epoch);
+    new_flag = YARN_BIT_CLEAR(old_flag, epoch, g_epoch_max);
   } while (yarn_casv(&g_rollback_flag, old_flag, new_flag) != old_flag);
 
   DBG printf("[---] ROLLBACK -> CLEAR [%3zu] - flag="YARN_SHEX"\n", 

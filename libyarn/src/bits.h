@@ -14,18 +14,21 @@ an appropriate size.
 
 
 #include <types.h>
+#include <assert.h>
 
-#define YARN_BIT_INDEX(value) ((value) % YARN_WORD_BIT_SIZE)
-#define YARN_BIT_MASK(index) (((yarn_word_t)1) << YARN_BIT_INDEX(index))
-#define YARN_BIT_SET(word,index) ((word) | YARN_BIT_MASK(index))
-#define YARN_BIT_CLEAR(word,index) ((word) & ~YARN_BIT_MASK(index))
+#define YARN_BIT_INDEX(value,max) (assert(max!=0), (value) % (max))
+//#define YARN_BIT_INDEX(value,max) ((value) % (max))
+#define YARN_BIT_MASK(index,max) (((yarn_word_t)1) << YARN_BIT_INDEX(index, max))
+#define YARN_BIT_SET(word,index,max) ((word) | YARN_BIT_MASK(index, max))
+#define YARN_BIT_CLEAR(word,index,max) ((word) & ~YARN_BIT_MASK(index, max))
 
 
-#include <stdio.h>
-
-inline yarn_word_t yarn_bit_mask_range (yarn_word_t first, yarn_word_t second) {
-  yarn_word_t a = ((yarn_word_t)1) << YARN_BIT_INDEX(first);
-  yarn_word_t b = ((yarn_word_t)1) << YARN_BIT_INDEX(second);
+inline yarn_word_t yarn_bit_mask_range (yarn_word_t first, 
+					yarn_word_t second, 
+					yarn_word_t max) 
+{
+  yarn_word_t a = ((yarn_word_t)1) << YARN_BIT_INDEX(first, max);
+  yarn_word_t b = ((yarn_word_t)1) << YARN_BIT_INDEX(second, max);
   yarn_word_t c = (a-1) ^ (b-1);
 
   if (a != b) {
