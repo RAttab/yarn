@@ -5,7 +5,7 @@
 The main yarn header for the target programs.
  */
 
-#include <yarn.h>
+#include "yarn.h"
 
 #include "tpool.h"
 #include "epoch.h"
@@ -64,7 +64,6 @@ bool yarn_init (void) {
 }
 
 void yarn_destroy(void) {
-  yarn_dep_global_destroy();
   yarn_epoch_destroy();
   yarn_pmem_destroy(g_task_allocator);
   yarn_tpool_destroy();
@@ -133,7 +132,7 @@ bool pool_worker_simple (yarn_word_t pool_id, void* task) {
 }
 
 
-bool yarn_exec_basic (yarn_executor_t executor, 
+bool yarn_exec_simple (yarn_executor_t executor, 
 		      void* data, 
 		      yarn_word_t ws_size, 
 		      yarn_word_t index_size) 

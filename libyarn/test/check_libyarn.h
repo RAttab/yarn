@@ -22,6 +22,6 @@ Suite* yarn_pmem_suite();
 
 Suite* yarn_epoch_suite();
 Suite* yarn_dep_suite();
-
+Suite* yarn_exec_suite();
 
 #endif

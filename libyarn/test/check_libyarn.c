@@ -18,7 +18,7 @@ Test launcher for libyarn.a
 
 int run_suite (Suite* s) {
   SRunner* sr = srunner_create(s);
-  //srunner_set_fork_status(s, CK_FORK | CK_NOFORK);
+  //srunner_set_fork_status(sr, CK_NOFORK);
 
   srunner_run_all(sr, CK_VERBOSE);
   
@@ -46,6 +46,7 @@ int main (int argc, char** argv) {
 
   err |= run_suite(yarn_epoch_suite()) > 0;
   err |= run_suite(yarn_dep_suite()) > 0;
+  err |= run_suite(yarn_exec_suite()) > 0;
 
   
   return err ? EXIT_FAILURE : EXIT_SUCCESS;
