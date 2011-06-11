@@ -266,6 +266,9 @@ static struct {
   yarn_word_t r;
 } g_counter;
 
+typedef enum {ok, done, err} ret_t;
+typedef ret_t (*calc_func_t) (yarn_word_t pool_id);
+
 
 static void t_dep_para_setup (void) {
   t_dep_base_setup();
@@ -280,35 +283,13 @@ static void t_dep_para_teardown (void) {
 }
 
 
-#define CHECK_DEP(x) if(!(x)) goto dep_error;
-typedef enum {ok, done, err} ret_t;
 
-ret_t t_dep_para_full_calc(yarn_word_t pool_id) {
-
-  yarn_word_t i;
-  CHECK_DEP(yarn_dep_load(pool_id, &g_counter.i, &i));
-  i++;
-  CHECK_DEP(yarn_dep_store(pool_id, &i, &g_counter.i));
-      
-  if (i > g_counter.n) {
-    return done;
-  }
-      
-  yarn_word_t acc;
-  CHECK_DEP(yarn_dep_load(pool_id, &g_counter.acc, &acc));
-  acc += i;
-  CHECK_DEP(yarn_dep_store(pool_id, &acc, &g_counter.acc));
-
-  return ok;
-
- dep_error:
-  perror(__FUNCTION__);
-  return err;
-}
 
 
 bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
   (void) task;
+
+  calc_func_t* calc_fun = (calc_func_t*) task;
 
   while(true) {
     enum yarn_epoch_status old_status;
@@ -337,7 +318,7 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
     DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> CALC   => [%3zu]\n", 
 	       get_rel_time(), pool_id, epoch);
 
-    ret_t calc_ret = t_dep_para_full_calc(pool_id);
+    ret_t calc_ret = (*calc_fun)(pool_id);
     if (calc_ret == done) {
       DBG printf("\t\t\t\t\t\t\t\t"STR_TS"<%zu> F_STOP => [%3zu]\n", 
 		 get_rel_time(), pool_id, epoch);
@@ -376,11 +357,45 @@ bool t_dep_para_full_worker(yarn_word_t pool_id, void* task) {
 
 }
 
+
+
+
+#define CHECK_DEP(x) if(!(x)) goto dep_error;
+
+ret_t t_dep_para_full_calc(yarn_word_t pool_id) {
+
+  yarn_word_t i;
+  CHECK_DEP(yarn_dep_load(pool_id, &g_counter.i, &i));
+  i++;
+  CHECK_DEP(yarn_dep_store(pool_id, &i, &g_counter.i));
+      
+  if (i > g_counter.n) {
+    return done;
+  }
+      
+  yarn_word_t acc;
+  CHECK_DEP(yarn_dep_load(pool_id, &g_counter.acc, &acc));
+  acc += i;
+  CHECK_DEP(yarn_dep_store(pool_id, &acc, &g_counter.acc));
+
+  return ok;
+
+ dep_error:
+  perror(__FUNCTION__);
+  return err;
+}
+
 START_TEST(t_dep_para_full) {
 
   set_base_time();
 
-  bool ret = yarn_tpool_exec(t_dep_para_full_worker, NULL);
+  calc_func_t* f_ptr = (calc_func_t*) malloc(sizeof(calc_func_t*));
+  *f_ptr = t_dep_para_full_calc;
+
+  bool ret = yarn_tpool_exec(t_dep_para_full_worker, f_ptr);
+
+  free(f_ptr);
+
   fail_if (!ret);
   fail_if (g_counter.acc != g_counter.r, 
 	   "answer=%zu, expected=%zu", g_counter.acc, g_counter.r);
@@ -395,15 +410,56 @@ END_TEST
 
 
 
-void cycle_epoch(yarn_word_t epoch) {
+#define INDEX_I 0
+#define INDEX_ACC 1
+
+ret_t t_dep_para_full_calc_fast(yarn_word_t pool_id) {
+
+  yarn_word_t i;
+  CHECK_DEP(yarn_dep_load_fast(pool_id, INDEX_I, &g_counter.i, &i));
+  i++;
+  CHECK_DEP(yarn_dep_store_fast(pool_id, INDEX_I, &i, &g_counter.i));
+      
+  if (i > g_counter.n) {
+    return done;
+  }
+      
+  yarn_word_t acc;
+  CHECK_DEP(yarn_dep_load_fast(pool_id, INDEX_ACC, &g_counter.acc, &acc));
+  acc += i;
+  CHECK_DEP(yarn_dep_store_fast(pool_id, INDEX_ACC, &acc, &g_counter.acc));
+
+  return ok;
+
+ dep_error:
+  perror(__FUNCTION__);
+  return err;
+}
+
+
+START_TEST(t_dep_para_full_fast) {
+
+  set_base_time();
+
+  calc_func_t* f_ptr = (calc_func_t*) malloc(sizeof(calc_func_t));
+  *f_ptr = t_dep_para_full_calc_fast;
+
+  bool ret = yarn_tpool_exec(t_dep_para_full_worker, f_ptr);
+
+  free(f_ptr);
+
+  fail_if (!ret);
+  fail_if (g_counter.acc != g_counter.r, 
+	   "answer=%zu, expected=%zu", g_counter.acc, g_counter.r);
+  fail_if (g_counter.i != g_counter.n+1,
+	   "i=%zu, expected=%zu", g_counter.i, g_counter.n+1);
+  
   yarn_word_t commit_epoch;
   void* task;
-
-  yarn_epoch_set_done(epoch);
-  yarn_epoch_get_next_commit(&commit_epoch, &task);
-  assert(epoch == commit_epoch);
-  yarn_epoch_commit_done(commit_epoch);
+  fail_if (yarn_epoch_get_next_commit(&commit_epoch, &task));
 }
+END_TEST
+
 
 
 Suite* yarn_dep_suite (void) {
@@ -421,6 +477,7 @@ Suite* yarn_dep_suite (void) {
   tcase_add_checked_fixture(tc_para, t_dep_para_setup, t_dep_para_teardown);
   // tcase_set_timeout(tc_para, 1000000000);
   tcase_add_test(tc_para, t_dep_para_full);
+  tcase_add_test(tc_para, t_dep_para_full_fast);
   suite_add_tcase(s, tc_para);
 
 

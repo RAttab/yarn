@@ -80,6 +80,7 @@ static inline struct addr_info* acquire_index_addr_info (yarn_word_t pool_id,
 							 const void* addr);
 
 static inline void info_list_push (yarn_word_t epoch, struct addr_info* info);
+static inline void info_list_push_if_new (yarn_word_t epoch, struct addr_info* info);
 static inline struct addr_info* info_list_pop (yarn_word_t epoch);
 
 static inline void dep_violation_check (yarn_word_t epoch, yarn_word_t read_flags);
@@ -451,6 +452,9 @@ static inline struct addr_info* acquire_index_addr_info (yarn_word_t pool_id,
   else {
     info = g_info_index[index_id];
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
+
+    const yarn_word_t epoch = get_epoch(pool_id);
+    info_list_push_if_new(epoch, info);
   }
 
   return info;
@@ -482,13 +486,10 @@ static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id,
     tmp_info = NULL;
     YARN_CHECK_RET0(pthread_mutex_lock(&info->lock));
 
-    const yarn_word_t mask = YARN_BIT_MASK(epoch, g_epoch_max);
-    if ((info->read_flags & mask) == 0 && (info->write_flags & mask) == 0) {
-      info_list_push(epoch, info);
-    }
+    info_list_push_if_new (epoch, info);
   }
   else {
-    info_list_push(epoch,info);
+    info_list_push(epoch, info);
   }
 
   return info;
@@ -512,6 +513,14 @@ static inline void info_list_push (yarn_word_t epoch, struct addr_info* info) {
   info->info_list[index] = g_info_list[index];
   g_info_list[index] = info;
 }
+
+static inline void info_list_push_if_new (yarn_word_t epoch, struct addr_info* info) {
+  const yarn_word_t mask = YARN_BIT_MASK(epoch, g_epoch_max);
+  if ((info->read_flags & mask) == 0 && (info->write_flags & mask) == 0) {
+    info_list_push(epoch, info);
+  }
+}
+
 
 static inline struct addr_info* info_list_pop (yarn_word_t epoch) {
   const yarn_word_t index = YARN_BIT_INDEX(epoch, g_epoch_max);
