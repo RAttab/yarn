@@ -10,7 +10,7 @@ Header for all thread related primitives.
 #define YARN_TPOOL_H_
 
 
-#include <types.h>
+#include <yarn/types.h>
 
 
 /*!

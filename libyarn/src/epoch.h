@@ -14,7 +14,7 @@ era of 30+ core CPUs then this class will need to be updated so that it works be
 #define YARN_EPOCH_H_
 
 
-#include <types.h>
+#include <yarn/types.h>
 
 
 enum yarn_epoch_status {
@@ -37,6 +37,8 @@ enum yarn_epoch_status {
 
 //! \warning Not thread safe.
 bool yarn_epoch_init(void);
+//! \warning Not thread safe.
+bool yarn_epoch_reset(void);
 //! \warning Not thread safe.
 void yarn_epoch_destroy(void);
 

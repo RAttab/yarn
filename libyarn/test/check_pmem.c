@@ -7,7 +7,7 @@
 
 #include "check_libyarn.h"
 
-#include <types.h>
+#include <yarn/types.h>
 #include <pmem.h>
 #include <tpool.h>
 

@@ -11,9 +11,9 @@ the epochs to infinity and still keep the comparaison coherent.
 
 #include "epoch.h"
 
-#include <types.h>
-#include <helper.h>
-#include <tpool.h>
+#include <yarn/types.h>
+#include "helper.h"
+#include "tpool.h"
 #include "timestamp.h"
 #include "atomic.h"
 #include "bits.h"
@@ -81,16 +81,8 @@ bool yarn_epoch_init(void) {
 
   g_epoch_list = malloc(g_epoch_max * sizeof(struct epoch_info));
   if (!g_epoch_list) goto alloc_error;
-  for (size_t i = 0; i < g_epoch_max; ++i) {
-    yarn_writev(&g_epoch_list[i].status, yarn_epoch_commit);
-    g_epoch_list[i].task = NULL;
-  }
-  
-  yarn_writev(&g_epoch_first, 0);
-  yarn_writev(&g_epoch_next, 0);
-  yarn_writev(&g_epoch_next_commit, 0);
-  yarn_writev(&g_rollback_flag, 0);
-  yarn_writev(&g_epoch_stop, -1);
+
+  yarn_epoch_reset();
 
   return true;
  
@@ -100,6 +92,23 @@ bool yarn_epoch_init(void) {
  lock_error:
   perror(__FUNCTION__);
   return false;
+}
+
+bool yarn_epoch_reset(void) {
+  assert(g_epoch_max == yarn_epoch_max() && "tpool_size() changed!");
+
+  for (size_t i = 0; i < g_epoch_max; ++i) {
+    yarn_writev(&g_epoch_list[i].status, yarn_epoch_commit);
+    g_epoch_list[i].task = NULL;
+  }
+
+  yarn_writev(&g_epoch_first, 0);
+  yarn_writev(&g_epoch_next, 0);
+  yarn_writev(&g_epoch_next_commit, 0);
+  yarn_writev(&g_rollback_flag, 0);
+  yarn_writev(&g_epoch_stop, -1);  
+
+  return true;
 }
 
 void yarn_epoch_destroy(void) {

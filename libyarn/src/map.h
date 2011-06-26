@@ -14,19 +14,21 @@ want to clear the table, just free it and re-initialize it.
 #define YARN_MAP_H_
 
 
-#include <types.h>
+#include <yarn/types.h>
 
 struct yarn_map;
+typedef void (*yarn_map_destructor) (void*);
 
 
 //! Initializes a new map object.
 struct yarn_map* yarn_map_init (size_t capacity);
 
-
-typedef void (*yarn_map_destructor) (void*);
+//! Deletes every element in the table and re-initializes it with the provided capapcity.
+bool yarn_map_reset(struct yarn_map* m, yarn_map_destructor des, size_t capacity);
 
 //! Frees a map object.
-void yarn_map_destroy (struct yarn_map* m, yarn_map_destructor d); 
+void yarn_map_destroy (struct yarn_map* m, yarn_map_destructor des); 
+
 
 /*!
 Looks for the given address and returns the value if present. Otherwise it adds the 

@@ -8,7 +8,7 @@
 
 #include "t_utils.h"
 
-#include <dependency.h>
+#include <yarn/dependency.h>
 #include <epoch.h>
 #include <tpool.h>
 

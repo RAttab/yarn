@@ -13,7 +13,7 @@ an appropriate size.
 #define YARN_BITS_H_
 
 
-#include <types.h>
+#include <yarn/types.h>
 #include <assert.h>
 
 #define YARN_BIT_INDEX(value,max) (assert(max!=0), (value) % (max))

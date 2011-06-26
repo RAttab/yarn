@@ -5,10 +5,10 @@
  */
 
 
-#include <dependency.h>
+#include <yarn/dependency.h>
 
-#include <types.h>
-#include <helper.h>
+#include <yarn/types.h>
+#include "helper.h"
 #include "epoch.h"
 #include "atomic.h"
 #include "map.h"
@@ -48,7 +48,7 @@ static struct yarn_map* g_dependency_map;
 static struct yarn_pmem* g_addr_info_alloc;
 
 //! \todo Probably won't only hold epochs.
-static struct yarn_pstore* g_epoch_store;
+static struct yarn_pstore* g_epoch_store = NULL;
 
 static yarn_word_t g_epoch_max;
 
@@ -152,17 +152,17 @@ bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size) {
 
   g_info_list = (struct addr_info**) malloc(g_epoch_max * sizeof(struct addr_info*));
   if (!g_info_list) goto list_alloc_error;
-  for (size_t i = 0; i < g_epoch_max; ++i) {
-    g_info_list[i] = NULL;
-  }
 
   g_info_index_size = index_size;
   g_info_index = (struct addr_info**) malloc(index_size * sizeof(struct addr_info*));
   if (!g_info_index) goto index_alloc_error;
-  for (yarn_word_t i = 0; i < index_size; ++i) {
+  for (yarn_word_t i = 0; i < g_info_index_size; ++i) {
     g_info_index[i] = NULL;
   }
 
+  for (size_t i = 0; i < g_epoch_max; ++i) {
+    g_info_list[i] = NULL;
+  }
 
   return true;
   
@@ -180,6 +180,40 @@ bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size) {
   return false;
 }
 
+
+bool yarn_dep_global_reset (size_t ws_size, yarn_word_t index_size) {
+  assert(g_epoch_max == yarn_epoch_max() && "tpool_size() changed!");
+
+  bool ret = yarn_map_reset(g_dependency_map, map_item_destruct, ws_size);
+  if (!ret) goto map_reset_error;
+
+  if (g_info_index_size != index_size) {
+    free(g_info_index);
+    g_info_index = NULL;
+
+    g_info_index_size = index_size;
+    g_info_index = (struct addr_info**) malloc(index_size * sizeof(struct addr_info*));
+    if (!g_info_index) goto index_alloc_error;
+  }
+
+  for (yarn_word_t i = 0; i < g_info_index_size; ++i) {
+    g_info_index[i] = NULL;
+  }
+
+  for (size_t i = 0; i < g_epoch_max; ++i) {
+    g_info_list[i] = NULL;
+  }
+
+  return true;
+  
+ index_alloc_error:
+ map_reset_error:
+  perror(__FUNCTION__);
+  return false;
+
+}
+
+
 void yarn_dep_global_destroy (void) {
   yarn_map_destroy(g_dependency_map, map_item_destruct);
   yarn_pmem_destroy(g_addr_info_alloc);
@@ -191,9 +225,12 @@ void yarn_dep_global_destroy (void) {
     }
   }
 
+  if (g_info_index != NULL) {
+    free(g_info_index);
+  }
+
   yarn_pstore_destroy(g_epoch_store);
   free(g_info_list);
-  free(g_info_index);
 }
 
 

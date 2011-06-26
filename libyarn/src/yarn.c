@@ -5,11 +5,11 @@
 The main yarn header for the target programs.
  */
 
-#include "yarn.h"
+#include <yarn.h>
 
+#include <yarn/dependency.h>
 #include "tpool.h"
 #include "epoch.h"
-#include "dependency.h"
 #include "bits.h"
 #include "pmem.h"
 
@@ -22,50 +22,63 @@ struct task_info {
 };
 
 
-static yarn_word_t g_base_epoch;
+static bool g_is_dep_init;
 
-static struct yarn_pmem* g_task_allocator;
 
-bool task_constructor (void* task) {
-  (void) task;
+static bool init_dep (size_t ws_size, yarn_word_t index_size) {
+  if (g_is_dep_init) {
+    bool ret = yarn_dep_global_reset(ws_size, index_size);
+    if (ret) {
+      return true;
+    }
+    else {
+      yarn_dep_global_destroy();
+      perror(__FUNCTION__);
+
+      // Try to recover with a regular init if not in debug mode.
+      assert(false && "dep_reset failed.");
+    }
+  }
+
+  bool ret = yarn_dep_global_init(ws_size, index_size);
+  if (!ret) goto init_error;
+
+  g_is_dep_init = true;
+
   return true;
+  
+ init_error:
+  g_is_dep_init = false;  
+  perror(__FUNCTION__);
+  return false;
 }
-void task_destructor (void* task) {
-  (void) task;
+
+static void destroy_dep (void) {
+  if (g_is_dep_init) {
+    yarn_dep_global_destroy();
+  }
 }
 
 
 bool yarn_init (void) {
 
-  if (!yarn_tpool_init()) 
-    goto tpool_error;  
-
-  g_task_allocator = yarn_pmem_init(sizeof(yarn_word_t),
-				    task_constructor,
-				    task_destructor);
-  if (!g_task_allocator)
-    goto allocator_error;
-
-
-  if (!yarn_epoch_init()) 
-    goto epoch_error;
-
+  if (!yarn_tpool_init()) goto tpool_error;  
+  if (!yarn_epoch_init()) goto epoch_error;
 
   return true;
 
   yarn_epoch_destroy();
  epoch_error:
-  yarn_pmem_destroy(g_task_allocator);
- allocator_error:
   yarn_tpool_destroy();
  tpool_error:
   perror(__FUNCTION__);
   return false;
 }
 
+
 void yarn_destroy(void) {
+  destroy_dep();
   yarn_epoch_destroy();
-  yarn_pmem_destroy(g_task_allocator);
   yarn_tpool_destroy();
 }
 
@@ -137,19 +150,19 @@ bool yarn_exec_simple (yarn_executor_t executor,
 		      yarn_word_t ws_size, 
 		      yarn_word_t index_size) 
 {
-  g_base_epoch = yarn_epoch_last();
-
   bool ret;
-  if (!yarn_dep_global_init(ws_size, index_size)) {
-    ret = false;
-    goto dep_error;
-  }
+
+  ret = init_dep(ws_size, index_size);
+  if (!ret) goto dep_alloc_error;
 
   struct task_info info = {executor, data};
   ret = yarn_tpool_exec(pool_worker_simple, (void*) &info);
+  if (!ret) goto exec_error;
 
- dep_error:
-  yarn_dep_global_destroy();
+  return true;
 
-  return ret;
+ exec_error:
+ dep_alloc_error:
+  perror(__FUNCTION__);
+  return false;
 }

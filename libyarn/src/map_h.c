@@ -7,7 +7,7 @@
 Implements linear probing and 
  */
 
-#include <types.h>
+#include <yarn/types.h>
 #include "map.h"
 #include "atomic.h"
 
@@ -58,6 +58,7 @@ struct yarn_map {
 
 static inline size_t hash(uintptr_t h, size_t capacity);
 static bool init_table (struct map_node** table, size_t capacity);
+static void clear_table (struct map_node* table, yarn_map_destructor des, size_t capacity);
 static void resize_master (struct yarn_map* m);
 static void resize_helper (struct yarn_map* m);
 
@@ -75,6 +76,18 @@ static bool init_table (struct map_node** table, size_t capacity) {
   }
 
   return true;
+}
+
+static void clear_table (struct map_node* table, 
+			 yarn_map_destructor des, 
+			 size_t capacity) 
+{
+  for (size_t i = 0; i < capacity; ++i) {
+    if (yarn_readp(&table[i].addr) != NULL) {
+      des(yarn_readp(&table[i].value));
+      yarn_writep(&table[i].addr, NULL);
+    }
+  }
 }
 
 
@@ -104,18 +117,33 @@ struct yarn_map* yarn_map_init (size_t capacity) {
   return NULL;
 }
 
+bool yarn_map_reset(struct yarn_map* m, yarn_map_destructor des, size_t capacity) {
 
-//! \todo Make sure we get something to clean up the values. Probably a fct ptr.
-void yarn_map_destroy (struct yarn_map* m, yarn_map_destructor d) {
+  clear_table(m->table, des, m->capacity);
 
-  for (size_t i = 0; i < m->capacity; ++i) {
-    if (yarn_readp(&m->table[i].addr) != NULL) {
-      d(yarn_readp(&m->table[i].value));
-      yarn_writep(&m->table[i].addr, NULL);
-    }
+  if (m->capacity < capacity) {
+    free(m->table);
+    m->table = NULL;
+
+    m->capacity = capacity;
+    bool ret = init_table(&m->table, m->capacity);
+    if (!ret) goto table_init_error;
   }
 
-  free(m->table);
+  return true;
+
+ table_init_error:
+  perror(__FUNCTION__);
+  return false;
+}
+
+
+//! \todo Make sure we get something to clean up the values. Probably a fct ptr.
+void yarn_map_destroy (struct yarn_map* m, yarn_map_destructor des) {
+  clear_table(m->table, des, m->capacity);
+  if (m->table != NULL) {
+    free(m->table);
+  }
   free(m);
 }
 

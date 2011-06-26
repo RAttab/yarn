@@ -7,7 +7,7 @@
 #define YARN_YARN_H_
 
 
-#include "dependency.h"
+#include "yarn/dependency.h"
 
 enum yarn_ret {
   yarn_ret_continue,
@@ -18,7 +18,7 @@ enum yarn_ret {
 typedef enum yarn_ret (*yarn_executor_t) (const yarn_word_t pool_id, void* data);
 
 bool yarn_init (void);
-void yarn_destroy(void);
+void yarn_destroy (void);
 
 bool yarn_exec_simple (yarn_executor_t executor, 
 		       void* data, 

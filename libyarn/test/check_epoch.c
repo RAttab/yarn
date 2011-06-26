@@ -8,7 +8,7 @@
 
 #include "t_utils.h"
 
-#include <types.h>
+#include <yarn/types.h>
 #include <epoch.h>
 #include <tpool.h>
 

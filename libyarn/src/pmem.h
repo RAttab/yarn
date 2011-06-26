@@ -9,7 +9,7 @@ Pool allocation.
 #define YARN_PMEM_H_
 
 
-#include <types.h>
+#include <yarn/types.h>
 #include "tpool.h"
 #include "pstore.h"
 

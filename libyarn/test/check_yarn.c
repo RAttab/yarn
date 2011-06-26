@@ -70,19 +70,22 @@ enum yarn_ret t_yarn_exec_simple_worker (yarn_word_t pool_id, void* data) {
 
 
 START_TEST (t_yarn_exec_simple) {
-  data_t counter;
-  counter.i = 0;
-  counter.acc = 0;
-  counter.n = 1000;
-  counter.r = (counter.n*(counter.n+1))/2;  
 
-  bool ret = yarn_exec_simple(t_yarn_exec_simple_worker, &counter, 2, 2);
+  for (int i = 0; i < 100; ++i) {
+    data_t counter;
+    counter.i = 0;
+    counter.acc = 0;
+    counter.n = 1000;
+    counter.r = (counter.n*(counter.n+1))/2;  
 
-  fail_if (!ret);
-  fail_if (counter.acc != counter.r, 
-	   "answer=%zu, expected=%zu", counter.acc, counter.r);
-  fail_if (counter.i != counter.n+1,
-	   "i=%zu, expected=%zu", counter.i, counter.n+1);
+    bool ret = yarn_exec_simple(t_yarn_exec_simple_worker, &counter, 2, 2);
+
+    fail_if (!ret);
+    fail_if (counter.acc != counter.r, 
+	     "answer=%zu, expected=%zu (i=%d)", counter.acc, counter.r, i);
+    fail_if (counter.i != counter.n+1,
+	     "i=%zu, expected=%zu", counter.i, counter.n+1);
+  }
   
 }
 END_TEST

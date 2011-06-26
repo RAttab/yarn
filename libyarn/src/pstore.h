@@ -12,7 +12,7 @@ Fast thread local storage.
 #define YARN_PSTORE_H_
 
 
-#include <types.h>
+#include <yarn/types.h>
 #include "tpool.h"
 
 #include <assert.h>

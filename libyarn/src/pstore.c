@@ -8,7 +8,7 @@
 
 #include "pstore.h"
 
-#include <types.h>
+#include <yarn/types.h>
 #include "tpool.h"
 
 #include <stdio.h>

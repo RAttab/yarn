@@ -12,16 +12,14 @@ very difficult to track these types of things.
 #define YARN_DEPENDENCY_H_
 
 
-#include "tpool.h"
+#include <yarn/types.h>
 
-#include <types.h>
-
+bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size);
+bool yarn_dep_global_reset (size_t ws_size, yarn_word_t index_size);
+void yarn_dep_global_destroy (void);
 
 bool yarn_dep_thread_init (yarn_word_t pool_id, yarn_word_t epoch);
 void yarn_dep_thread_destroy (yarn_word_t pool_id);
-
-bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size);
-void yarn_dep_global_destroy (void);
 
 bool yarn_dep_store (yarn_word_t pool_id, const void* src, void* dest);
 bool yarn_dep_store_fast (yarn_word_t pool_id, 
