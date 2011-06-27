@@ -11,6 +11,7 @@ The main yarn header for the target programs.
 #include "t_utils.h"
 
 #include <yarn.h>
+#include <epoch.h>
 
 #include <assert.h>
 #include <stdio.h>
@@ -43,7 +44,6 @@ typedef struct {
 
 enum yarn_ret t_yarn_exec_simple_worker (yarn_word_t pool_id, void* data) {
   data_t* counter = (data_t*) data;
-
   
   yarn_word_t i;
   CHECK_DEP(yarn_dep_load_fast(pool_id, INDEX_I, &counter->i, &i));
@@ -71,11 +71,11 @@ enum yarn_ret t_yarn_exec_simple_worker (yarn_word_t pool_id, void* data) {
 
 START_TEST (t_yarn_exec_simple) {
 
-  for (int i = 0; i < 100; ++i) {
+  for (int i = 0; i < 10; ++i) {
     data_t counter;
     counter.i = 0;
     counter.acc = 0;
-    counter.n = 1000;
+    counter.n = 100;
     counter.r = (counter.n*(counter.n+1))/2;  
 
     bool ret = yarn_exec_simple(t_yarn_exec_simple_worker, &counter, 2, 2);
@@ -85,13 +85,16 @@ START_TEST (t_yarn_exec_simple) {
 	     "answer=%zu, expected=%zu (i=%d)", counter.acc, counter.r, i);
     fail_if (counter.i != counter.n+1,
 	     "i=%zu, expected=%zu", counter.i, counter.n+1);
+
   }
   
 }
 END_TEST
 
 
-Suite* yarn_exec_suite (void) {
+Suite* yarn_exec_suite (bool para_only) {
+  (void) para_only;
+
   Suite* s = suite_create("yarn_exec");
 
   TCase* tc_seq = tcase_create("yarn_exec");

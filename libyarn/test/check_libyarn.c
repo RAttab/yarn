@@ -35,18 +35,20 @@ int main (int argc, char** argv) {
   ((void) argc);
   ((void) argv);
 
+  bool para_only = argc > 1;
+
   bool err = false;
 
-  err |= run_suite(yarn_map_suite()) > 0;
-  err |= run_suite(yarn_bits_suite()) > 0;
-  
-  err |= run_suite(yarn_tpool_suite()) > 0; 
-  err |= run_suite(yarn_pstore_suite()) > 0;
-  err |= run_suite(yarn_pmem_suite()) > 0;
+  err |= run_suite(yarn_map_suite(para_only)) > 0;  
+  if (!para_only) err |= run_suite(yarn_bits_suite()) > 0;
 
-  err |= run_suite(yarn_epoch_suite()) > 0;
-  err |= run_suite(yarn_dep_suite()) > 0;
-  err |= run_suite(yarn_exec_suite()) > 0;
+  if (!para_only) err |= run_suite(yarn_tpool_suite()) > 0; 
+  if (!para_only) err |= run_suite(yarn_pstore_suite()) > 0;
+  if (!para_only) err |= run_suite(yarn_pmem_suite()) > 0;
+
+  err |= run_suite(yarn_epoch_suite(para_only)) > 0;
+  err |= run_suite(yarn_dep_suite(para_only)) > 0;
+  err |= run_suite(yarn_exec_suite(para_only)) > 0;
 
   
   return err ? EXIT_FAILURE : EXIT_SUCCESS;

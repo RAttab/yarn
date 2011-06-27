@@ -140,7 +140,7 @@ START_TEST(t_tpool_exec_bad) {
 }
 END_TEST
 
-Suite* yarn_tpool_suite (void) {
+Suite* yarn_tpool_suite () {
   Suite* s = suite_create("yarn_tpool");
 
   TCase* tc_basic = tcase_create("yarn_tpool.basic");

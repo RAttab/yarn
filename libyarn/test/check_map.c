@@ -11,13 +11,7 @@ Tests for the concurrent hash map.
 #include <map.h>
 #include <tpool.h>
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <errno.h>
-#include <pthread.h>
-#include <unistd.h>
-#include <sched.h>
+#include "t_utils.h"
 
 
 // Fixture.
@@ -63,6 +57,24 @@ START_TEST(t_map_basic_add_and_get) {
 }
 END_TEST
 
+START_TEST(t_map_basic_reset) {
+  const yarn_word_t val_1 = YARN_T_VALUE_1;
+  const yarn_word_t val_2 = YARN_T_VALUE_2;
+  const yarn_word_t val_3 = YARN_T_VALUE_3;
+  const uintptr_t addr_1 = (uintptr_t) &val_1;
+
+  yarn_map_probe(f_map, addr_1, (void*)&val_1);
+  void* r_2 = yarn_map_probe(f_map, addr_1, (void*)&val_2);
+  fail_if(r_2 != (void*)&val_1, "r_2=%p, expected=%p", r_2, (void*)&val_1);
+
+  bool ret = yarn_map_reset(f_map, t_map_item_destruct, 0);
+  fail_if(!ret);
+
+  void* r_3 = yarn_map_probe(f_map, addr_1, (void*)&val_3);
+  fail_if(r_3 != (void*)&val_3, "r_3=%p, expected=%p", r_3, (void*)&val_3);
+   
+}
+END_TEST
 
 /*!
 \test t_map_basic_add_duplicate
@@ -215,28 +227,24 @@ END_TEST
 
 
 // Creates the test case and suite for yarn_map.
-Suite* yarn_map_suite (void) {
+Suite* yarn_map_suite (bool para_only) {
   Suite* s = suite_create("yarn_map");
 
-  TCase* tc_basic = tcase_create("yarn_map.basic");
-  tcase_add_checked_fixture(tc_basic, t_map_basic_setup, t_map_basic_teardown);
-  tcase_add_test(tc_basic, t_map_basic_add_and_get);
-  tcase_add_test(tc_basic, t_map_basic_add_duplicate);
-  tcase_add_test(tc_basic, t_map_basic_resize);
-  suite_add_tcase(s, tc_basic);
-
-  const int NUM_CPU = sysconf(_SC_NPROCESSORS_ONLN);
-  if (NUM_CPU > 1) {
-
-    TCase* tc_conc = tcase_create("yarn_map.concurent");
-    tcase_add_checked_fixture(tc_conc, t_map_para_setup, t_map_para_teardown);
-    tcase_add_test(tc_conc, t_map_para_distinct_add);
-    tcase_add_test(tc_conc, t_map_para_duplicate_add);
-    suite_add_tcase(s, tc_conc);
+  if (!para_only) {
+    TCase* tc_basic = tcase_create("yarn_map.basic");
+    tcase_add_checked_fixture(tc_basic, t_map_basic_setup, t_map_basic_teardown);
+    tcase_add_test(tc_basic, t_map_basic_add_and_get);
+    tcase_add_test(tc_basic, t_map_basic_reset);
+    tcase_add_test(tc_basic, t_map_basic_add_duplicate);
+    tcase_add_test(tc_basic, t_map_basic_resize);
+    suite_add_tcase(s, tc_basic);
   }
-  else {
-    printf("Detected only a single CPU. Skipping parallel tests.\n");
-  }
+
+  TCase* tc_conc = tcase_create("yarn_map.concurent");
+  tcase_add_checked_fixture(tc_conc, t_map_para_setup, t_map_para_teardown);
+  tcase_add_test(tc_conc, t_map_para_distinct_add);
+  tcase_add_test(tc_conc, t_map_para_duplicate_add);
+  suite_add_tcase(s, tc_conc);
 
   return s;
 }

@@ -96,6 +96,7 @@ yarn_word_t epoch_task_count (yarn_word_t epoch) {
 
 
 bool pool_worker_simple (yarn_word_t pool_id, void* task) {
+
   struct task_info* info = (struct task_info*) task;
 
   while (true) {
@@ -155,6 +156,9 @@ bool yarn_exec_simple (yarn_executor_t executor,
   ret = init_dep(ws_size, index_size);
   if (!ret) goto dep_alloc_error;
 
+  ret = yarn_epoch_reset();
+  if (!ret) goto epoch_reset_error;
+
   struct task_info info = {executor, data};
   ret = yarn_tpool_exec(pool_worker_simple, (void*) &info);
   if (!ret) goto exec_error;
@@ -162,6 +166,7 @@ bool yarn_exec_simple (yarn_executor_t executor,
   return true;
 
  exec_error:
+ epoch_reset_error:
  dep_alloc_error:
   perror(__FUNCTION__);
   return false;

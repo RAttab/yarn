@@ -25,6 +25,7 @@ void yarn_pmem_destroy(struct yarn_pmem* m);
 
 void* yarn_pmem_alloc(struct yarn_pmem* m, yarn_word_t pool_id);
 void yarn_pmem_free(struct yarn_pmem* m, yarn_word_t pool_id, void* data);
+void yarn_pmem_free_seq(struct yarn_pmem* m, void* data);
 
 
 

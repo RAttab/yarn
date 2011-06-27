@@ -163,6 +163,33 @@ START_TEST(t_dep_seq_load_store_fast) {
 }
 END_TEST
 
+START_TEST(t_dep_seq_reset) {
+  {
+    yarn_word_t mem = YARN_T_VALUE_1;
+    
+    t_yarn_check_dep_store(f_seq.pid_1, &mem, YARN_T_VALUE_2);
+
+    bool ret = yarn_dep_global_reset(100, g_index_size);
+    fail_if(!ret);
+    
+    t_yarn_check_dep_load(f_seq.pid_1, &mem, YARN_T_VALUE_1);
+  }
+
+  {
+    yarn_word_t mem = YARN_T_VALUE_1;
+    
+    t_yarn_check_dep_store_fast(f_seq.pid_1, 0, &mem, YARN_T_VALUE_2);
+
+    bool ret = yarn_dep_global_reset(100, g_index_size);
+    fail_if(!ret);
+    
+    t_yarn_check_dep_load_fast(f_seq.pid_1, 0, &mem, YARN_T_VALUE_1);
+
+  }
+
+}
+END_TEST
+
 START_TEST(t_dep_seq_commit) {
   yarn_word_t mem_1 = 0;
   yarn_word_t mem_2 = 0;
@@ -462,16 +489,19 @@ END_TEST
 
 
 
-Suite* yarn_dep_suite (void) {
+Suite* yarn_dep_suite (bool para_only) {
   Suite* s = suite_create("yarn_dep");
 
-  TCase* tc_seq = tcase_create("yarn_dep.sequential");
-  tcase_add_checked_fixture(tc_seq, t_dep_seq_setup, t_dep_seq_teardown);
-  tcase_add_test(tc_seq, t_dep_seq_load_store);
-  tcase_add_test(tc_seq, t_dep_seq_load_store_fast);
-  tcase_add_test(tc_seq, t_dep_seq_commit);
-  tcase_add_test(tc_seq, t_dep_seq_rollback);
-  suite_add_tcase(s, tc_seq);
+  if (!para_only) {
+    TCase* tc_seq = tcase_create("yarn_dep.sequential");
+    tcase_add_checked_fixture(tc_seq, t_dep_seq_setup, t_dep_seq_teardown);
+    tcase_add_test(tc_seq, t_dep_seq_load_store);
+    tcase_add_test(tc_seq, t_dep_seq_load_store_fast);
+    tcase_add_test(tc_seq, t_dep_seq_reset);
+    tcase_add_test(tc_seq, t_dep_seq_commit);
+    tcase_add_test(tc_seq, t_dep_seq_rollback);
+    suite_add_tcase(s, tc_seq);
+  }
 
   TCase* tc_para = tcase_create("yarn_dep.parallel");
   tcase_add_checked_fixture(tc_para, t_dep_para_setup, t_dep_para_teardown);

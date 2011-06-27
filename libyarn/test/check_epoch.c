@@ -390,21 +390,27 @@ END_TEST
 
 
 
-Suite* yarn_epoch_suite (void) {
+Suite* yarn_epoch_suite (bool para_only) {
   Suite* s = suite_create("yarn_epoch");
 
-  TCase* tc_basic = tcase_create("yarn_epoch.basic");
-  tcase_add_checked_fixture(tc_basic, t_epoch_setup, t_epoch_teardown);
-  tcase_add_test(tc_basic, t_epoch_next);
-  tcase_add_test(tc_basic, t_epoch_rollback_executing);
-  tcase_add_test(tc_basic, t_epoch_rollback_done);
-  tcase_add_test(tc_basic, t_epoch_rollback_range);
-  tcase_add_test(tc_basic, t_epoch_commit);
-  tcase_add_test(tc_basic, t_epoch_stop_basic);
-  tcase_add_test(tc_basic, t_epoch_stop_rollback_before);
-  tcase_add_test(tc_basic, t_epoch_stop_rollback_after);
-  tcase_add_test(tc_basic, t_epoch_para);
-  suite_add_tcase(s, tc_basic);
+  if (!para_only) {
+    TCase* tc_basic = tcase_create("yarn_epoch.seq");
+    tcase_add_checked_fixture(tc_basic, t_epoch_setup, t_epoch_teardown);
+    tcase_add_test(tc_basic, t_epoch_next);
+    tcase_add_test(tc_basic, t_epoch_rollback_executing);
+    tcase_add_test(tc_basic, t_epoch_rollback_done);
+    tcase_add_test(tc_basic, t_epoch_rollback_range);
+    tcase_add_test(tc_basic, t_epoch_commit);
+    tcase_add_test(tc_basic, t_epoch_stop_basic);
+    tcase_add_test(tc_basic, t_epoch_stop_rollback_before);
+    tcase_add_test(tc_basic, t_epoch_stop_rollback_after);
+    suite_add_tcase(s, tc_basic);
+  }
+
+  TCase* tc_para = tcase_create("yarn_epoch.para");
+  tcase_add_checked_fixture(tc_para, t_epoch_setup, t_epoch_teardown);
+  tcase_add_test(tc_para, t_epoch_para);
+  suite_add_tcase(s, tc_para);
 
   return s;
 }

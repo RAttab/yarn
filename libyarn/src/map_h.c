@@ -86,8 +86,19 @@ static void clear_table (struct map_node* table,
     if (yarn_readp(&table[i].addr) != NULL) {
       des(yarn_readp(&table[i].value));
       yarn_writep(&table[i].addr, NULL);
+      yarn_writep(&table[i].value, NULL);
     }
   }
+}
+
+static size_t adjust_capacity(yarn_word_t capacity) {
+  size_t new_capacity = YARN_MAP_DEFAULT_CAPACITY;
+  size_t load_factor = (double)capacity / YARN_MAP_LOAD_FACTOR;
+
+  while(new_capacity < load_factor)
+    new_capacity <<= 1;
+
+  return new_capacity;
 }
 
 
@@ -95,10 +106,7 @@ struct yarn_map* yarn_map_init (size_t capacity) {
   struct yarn_map* map = malloc(sizeof(struct yarn_map));
   if (!map) goto alloc_error;
   
-  map->capacity = YARN_MAP_DEFAULT_CAPACITY;
-  size_t load_factor = (float)capacity / YARN_MAP_LOAD_FACTOR;
-  while(map->capacity < load_factor)
-    map->capacity <<= 1;
+  map->capacity = adjust_capacity(capacity);
 
   yarn_writev(&map->size, 0);
   bool ret = init_table(&map->table, map->capacity);
@@ -117,16 +125,20 @@ struct yarn_map* yarn_map_init (size_t capacity) {
   return NULL;
 }
 
-bool yarn_map_reset(struct yarn_map* m, yarn_map_destructor des, size_t capacity) {
+bool yarn_map_reset(struct yarn_map* map, yarn_map_destructor des, size_t capacity) {
 
-  clear_table(m->table, des, m->capacity);
+  clear_table(map->table, des, map->capacity);
+  yarn_writev(&map->size, 0);
+  yarn_writev(&map->user_count, 0);
+  yarn_writev(&map->helper_count, 0);
+  yarn_writev(&map->resize_state, 0);
 
-  if (m->capacity < capacity) {
-    free(m->table);
-    m->table = NULL;
+  if (map->capacity < capacity) {
+    free(map->table);
+    map->table = NULL;
 
-    m->capacity = capacity;
-    bool ret = init_table(&m->table, m->capacity);
+    map->capacity = adjust_capacity(capacity);
+    bool ret = init_table(&map->table, map->capacity);
     if (!ret) goto table_init_error;
   }
 

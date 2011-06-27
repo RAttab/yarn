@@ -106,3 +106,16 @@ void yarn_pmem_free(struct yarn_pmem* m, yarn_word_t pool_id, void* data) {
     free(data);
   }
 }
+
+
+
+// This should be called in a sequential context during clean up.
+// Since we don't have any pool_id, don't bother caching the frees.
+void yarn_pmem_free_seq(struct yarn_pmem* m, void* data) {
+
+  if (m->destruct_fun) {
+    (*m->destruct_fun)(data);
+  }
+  free(data);
+
+}

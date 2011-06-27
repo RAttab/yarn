@@ -130,7 +130,7 @@ static void addr_info_destruct(void* data) {
 
 static void map_item_destruct (void* data) {
   addr_info_destruct(data);
-  free(data);
+  yarn_pmem_free_seq(g_addr_info_alloc, data);
 }
 
 
@@ -515,7 +515,7 @@ static inline struct addr_info* acquire_map_addr_info (yarn_word_t pool_id,
   
   struct addr_info* info = (struct addr_info*) 
       yarn_map_probe(g_dependency_map, (uintptr_t)addr, tmp_info);
-  info->addr = (void*) addr; //! \todo It's either this or remove all const qualifiers.
+  info->addr = (void*) addr; //! \todo const cast or remove all const qualifiers...
   
   if (info != tmp_info) {
     YARN_CHECK_RET0(pthread_mutex_unlock(&tmp_info->lock));
