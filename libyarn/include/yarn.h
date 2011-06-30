@@ -25,5 +25,7 @@ bool yarn_exec_simple (yarn_executor_t executor,
 		       yarn_word_t ws_size, 
 		       yarn_word_t index_size);
 
+yarn_word_t yarn_thread_count();
+
 
 #endif // YARN_YARN_H_

@@ -94,6 +94,10 @@ yarn_word_t epoch_task_count (yarn_word_t epoch) {
 */
 
 
+yarn_word_t yarn_thread_count() {
+  return yarn_tpool_size();
+}
+
 
 bool pool_worker_simple (yarn_word_t pool_id, void* task) {
 
