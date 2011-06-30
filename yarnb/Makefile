@@ -56,7 +56,7 @@
 ## Customizable Section: adapt those variables to suit your program.
 ##==========================================================================
 
-LIBYARN_FOLDER = ../../libyarn
+LIBYARN_FOLDER = ../libyarn
 
 # The pre-processor and compiler options.
 MY_CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic \
