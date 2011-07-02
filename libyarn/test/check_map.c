@@ -178,7 +178,7 @@ resizes.
  */
 START_TEST (t_map_para_distinct_add) {
 
-  bool ret = yarn_tpool_exec(t_map_para_distinct_add_worker, NULL);
+  bool ret = yarn_tpool_exec(t_map_para_distinct_add_worker, NULL, YARN_TPOOL_ALL_THREADS);
   fail_if(!ret);
 
   size_t size = yarn_map_size(f_map);
@@ -216,7 +216,8 @@ Adds and finds a few elements multiple time forcing (hopefully) several concurre
 conflicts.
  */
 START_TEST (t_map_para_duplicate_add) {
-  bool ret = yarn_tpool_exec(t_map_para_duplicate_add_worker, NULL);
+  bool ret = yarn_tpool_exec(t_map_para_duplicate_add_worker, NULL, 
+			     YARN_TPOOL_ALL_THREADS);
   fail_if(!ret);
 
   size_t size = yarn_map_size(f_map);

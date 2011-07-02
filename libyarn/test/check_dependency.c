@@ -419,7 +419,7 @@ START_TEST(t_dep_para_full) {
   calc_func_t* f_ptr = (calc_func_t*) malloc(sizeof(calc_func_t*));
   *f_ptr = t_dep_para_full_calc;
 
-  bool ret = yarn_tpool_exec(t_dep_para_full_worker, f_ptr);
+  bool ret = yarn_tpool_exec(t_dep_para_full_worker, f_ptr, YARN_TPOOL_ALL_THREADS);
 
   free(f_ptr);
 
@@ -471,7 +471,7 @@ START_TEST(t_dep_para_full_fast) {
   calc_func_t* f_ptr = (calc_func_t*) malloc(sizeof(calc_func_t));
   *f_ptr = t_dep_para_full_calc_fast;
 
-  bool ret = yarn_tpool_exec(t_dep_para_full_worker, f_ptr);
+  bool ret = yarn_tpool_exec(t_dep_para_full_worker, f_ptr, YARN_TPOOL_ALL_THREADS);
 
   free(f_ptr);
 

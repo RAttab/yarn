@@ -151,9 +151,10 @@ bool pool_worker_simple (yarn_word_t pool_id, void* task) {
 
 
 bool yarn_exec_simple (yarn_executor_t executor, 
-		      void* data, 
-		      yarn_word_t ws_size, 
-		      yarn_word_t index_size) 
+		       void* data, 
+		       yarn_word_t thread_count,
+		       yarn_word_t ws_size, 
+		       yarn_word_t index_size) 
 {
   bool ret;
 
@@ -164,7 +165,7 @@ bool yarn_exec_simple (yarn_executor_t executor,
   if (!ret) goto epoch_reset_error;
 
   struct task_info info = {executor, data};
-  ret = yarn_tpool_exec(pool_worker_simple, (void*) &info);
+  ret = yarn_tpool_exec(pool_worker_simple, (void*) &info, thread_count);
   if (!ret) goto exec_error;
 
   return true;

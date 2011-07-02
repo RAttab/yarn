@@ -4,7 +4,7 @@
 
 Implementation details of threads.h
 
-\todo pthread error checking.
+\todo Need better implementation of thread limitter.
  */
 
 #include "tpool.h"
@@ -37,6 +37,7 @@ struct pool_task {
 
 static yarn_atomic_ptr g_pool_task;
 static yarn_atomic_var g_pool_task_error;
+static yarn_atomic_var g_pool_thread_count;
 static pthread_mutex_t g_pool_task_lock;
 static pthread_cond_t g_pool_task_cond;
 static pthread_barrier_t g_pool_task_barrier;
@@ -142,7 +143,11 @@ static inline void* worker_launcher (void* param);
 
 
 //! Executes the tasks and returns when everyone is done or yarn_tpool_interrupt is called.
-bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
+bool yarn_tpool_exec (yarn_worker_t worker, void* task, yarn_word_t thread_count) {
+  assert (thread_count <= yarn_tpool_size());
+  if (thread_count == 0) {
+    thread_count = yarn_tpool_size();
+  }
 
   struct pool_task* ptask = (struct pool_task*)malloc(sizeof(struct pool_task*));
   if (ptask == NULL) goto task_alloc_error;
@@ -156,6 +161,7 @@ bool yarn_tpool_exec (yarn_worker_t worker, void* task) {
     // Posts the task and notify the worker threads.
     yarn_writev(&g_pool_task_error, false);
     yarn_writep(&g_pool_task, ptask);
+    yarn_writev(&g_pool_thread_count, thread_count);
     YARN_CHECK_RET0(pthread_cond_broadcast(&g_pool_task_cond));
 
     YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
@@ -201,10 +207,12 @@ static inline void* worker_launcher (void* param) {
       task = (struct pool_task*) yarn_readp(&g_pool_task);
       YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
     }
-
-    bool task_ret = (*task->worker_fun)(pool_id, task->data);
-    if (!task_ret) {
-      yarn_writev(&g_pool_task_error, true);
+    
+    if (pool_id < yarn_readv(&g_pool_thread_count)) {
+      bool task_ret = (*task->worker_fun)(pool_id, task->data);
+      if (!task_ret) {
+	yarn_writev(&g_pool_task_error, true);
+      }
     }
 
     ret = pthread_barrier_wait(&g_pool_task_barrier);
@@ -224,7 +232,6 @@ static inline void* worker_launcher (void* param) {
 
     pthread_testcancel();
   }
-
 
   return NULL;
 }

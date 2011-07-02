@@ -78,7 +78,8 @@ START_TEST (t_yarn_exec_simple) {
     counter.n = 100;
     counter.r = (counter.n*(counter.n+1))/2;  
 
-    bool ret = yarn_exec_simple(t_yarn_exec_simple_worker, &counter, 2, 2);
+    bool ret = yarn_exec_simple(t_yarn_exec_simple_worker, &counter, 
+				YARN_ALL_THREADS, 2, 2);
 
     fail_if (!ret);
     fail_if (counter.acc != counter.r, 

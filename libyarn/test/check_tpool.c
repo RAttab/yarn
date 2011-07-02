@@ -66,7 +66,7 @@ bool t_good_worker (yarn_word_t pool_id, void* task) {
     new_count = old_count + pool_id+1;
   } while (yarn_casv(&w->good_count, old_count, new_count) != old_count);
 
-  //printf("pool_id=%zu -> GOOD -> old=%zu, new=%zu\n", pool_id, old_count, new_count);
+  // printf("pool_id=%zu -> GOOD -> old=%zu, new=%zu\n", pool_id, old_count, new_count);
   return true;
 }
 
@@ -92,6 +92,7 @@ bool t_bad_worker (yarn_word_t pool_id, void* task) {
 
 
 static void exec_tpool(yarn_worker_t worker, 
+		       yarn_word_t thread_count,
 		       bool expected_ret, 
 		       const yarn_word_t good_exp, 
 		       const yarn_word_t bad_exp,
@@ -103,7 +104,7 @@ static void exec_tpool(yarn_worker_t worker,
     yarn_writev(&f_worker->good_count, 0);
     yarn_writev(&f_worker->bad_count, 0);
 
-    bool ret = yarn_tpool_exec(worker, (void*)f_worker);
+    bool ret = yarn_tpool_exec(worker, (void*)f_worker, thread_count);
     const yarn_atomv_t good_count = yarn_readv(&f_worker->good_count);
     const yarn_atomv_t bad_count = yarn_readv(&f_worker->bad_count);
 
@@ -122,7 +123,7 @@ START_TEST(t_tpool_exec_good) {
   const yarn_word_t n = yarn_tpool_size();
   const yarn_word_t r = (n*(n+1))/2;
 
-  exec_tpool(t_good_worker, true, r, 0, "exec_good");
+  exec_tpool(t_good_worker, YARN_TPOOL_ALL_THREADS, true, r, 0, "exec_good");
 
 }
 END_TEST
@@ -133,12 +134,27 @@ START_TEST(t_tpool_exec_bad) {
   const int good_r = r - n/2;
   const int bad_r = n/2;
 
-  exec_tpool(t_bad_worker, false, good_r, bad_r, "first_bad");
-  exec_tpool(t_good_worker, true, r, 0, "second_good");
-  exec_tpool(t_bad_worker, false, good_r, bad_r, "third_bad");
+  exec_tpool(t_bad_worker, YARN_TPOOL_ALL_THREADS, false, good_r, bad_r, "first_bad");
+  exec_tpool(t_good_worker, YARN_TPOOL_ALL_THREADS, true, r, 0, "second_good");
+  exec_tpool(t_bad_worker, YARN_TPOOL_ALL_THREADS, false, good_r, bad_r, "third_bad");
   
 }
 END_TEST
+
+START_TEST(t_tpool_exec_thread_count) {
+  const yarn_word_t n = yarn_tpool_size();
+
+  for (yarn_word_t i = 0; i <= n; ++i) {
+    yarn_word_t j = i == 0 ? n : i;
+    const yarn_word_t r = (j*(j+1))/2;
+
+    exec_tpool(t_good_worker, i, true, r, 0, "exec_good");
+  }
+
+
+}
+END_TEST
+
 
 Suite* yarn_tpool_suite () {
   Suite* s = suite_create("yarn_tpool");
@@ -148,6 +164,7 @@ Suite* yarn_tpool_suite () {
   tcase_add_test(tc_basic, t_tpool_init);
   tcase_add_test(tc_basic, t_tpool_exec_good);
   tcase_add_test(tc_basic, t_tpool_exec_bad);
+  tcase_add_test(tc_basic, t_tpool_exec_thread_count);
   suite_add_tcase(s, tc_basic);
 
   return s;

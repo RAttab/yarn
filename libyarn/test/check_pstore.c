@@ -85,7 +85,7 @@ bool t_pstore_worker (yarn_word_t pool_id, void* task) {
 }
 
 START_TEST(t_pstore_para_load_store) {
-  bool ret = yarn_tpool_exec(t_pstore_worker, NULL);
+  bool ret = yarn_tpool_exec(t_pstore_worker, NULL, YARN_TPOOL_ALL_THREADS);
   fail_if (!ret);
 }
 END_TEST

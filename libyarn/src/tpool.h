@@ -28,8 +28,10 @@ typedef bool (*yarn_worker_t) (yarn_word_t, void*);
 bool yarn_tpool_init ();
 void yarn_tpool_destroy();
 
+#define YARN_TPOOL_ALL_THREADS 0
+
 //! Executes the tasks and returns when everyone is done is called.
-bool yarn_tpool_exec (yarn_worker_t worker, void* task);
+bool yarn_tpool_exec (yarn_worker_t worker, void* task, yarn_word_t thread_count);
 
 yarn_word_t yarn_tpool_size ();
 bool yarn_tpool_is_done();

@@ -272,7 +272,8 @@ void exec_normal (struct task* t) {
 }
 
 void exec_speculative (struct task* t) {
-  bool ret = yarn_exec_simple(run_speculative, (void*) t, t->array_size, 0);
+  bool ret = yarn_exec_simple(run_speculative, (void*) t, 
+			      YARN_ALL_THREADS, t->array_size, 0);
   assert(ret);
 }
 

@@ -383,7 +383,7 @@ bool t_epoch_para_worker (yarn_word_t pool_id, void* task) {
 
 START_TEST(t_epoch_para) {
   yarn_tpool_init();
-  yarn_tpool_exec(t_epoch_para_worker, NULL);
+  yarn_tpool_exec(t_epoch_para_worker, NULL, YARN_TPOOL_ALL_THREADS);
   yarn_tpool_destroy();
 }
 END_TEST
