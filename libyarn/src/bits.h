@@ -136,4 +136,17 @@ inline yarn_word_t yarn_bit_trailing_zeros (yarn_word_t v) {
 }
 
 
+#define YARN_BIT_PACK_SHIFT (YARN_WORD_BIT_SIZE / 2)
+#define YARN_BIT_PACK_MASK ((((yarn_word_t)1) << YARN_BIT_PACK_SHIFT) - 1)
+
+inline yarn_word_t yarn_bit_pack (yarn_word_t a, yarn_word_t b) {
+  return (a & YARN_BIT_PACK_MASK) | (b << YARN_WORD_BIT_SIZE / 2);
+}
+
+inline void yarn_bit_unpack (yarn_word_t in, yarn_word_t* a, yarn_word_t* b) {
+  *a = in & YARN_BIT_PACK_MASK;
+  *b = in >> YARN_BIT_PACK_SHIFT;
+}
+
+
 #endif // YARN_BITS_H_

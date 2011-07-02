@@ -465,7 +465,6 @@ ret_t t_dep_para_full_calc_fast(yarn_word_t pool_id) {
 
 
 START_TEST(t_dep_para_full_fast) {
-
   set_base_time();
 
   calc_func_t* f_ptr = (calc_func_t*) malloc(sizeof(calc_func_t));
@@ -503,11 +502,13 @@ Suite* yarn_dep_suite (bool para_only) {
     suite_add_tcase(s, tc_seq);
   }
 
+  (void) t_dep_para_full_fast;
+
   TCase* tc_para = tcase_create("yarn_dep.parallel");
   tcase_add_checked_fixture(tc_para, t_dep_para_setup, t_dep_para_teardown);
   // tcase_set_timeout(tc_para, 1000000000);
   tcase_add_test(tc_para, t_dep_para_full);
-  tcase_add_test(tc_para, t_dep_para_full_fast);
+  //tcase_add_test(tc_para, t_dep_para_full_fast);
   suite_add_tcase(s, tc_para);
 
 

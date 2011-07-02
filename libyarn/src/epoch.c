@@ -118,9 +118,13 @@ void yarn_epoch_destroy(void) {
 
 
 
-
+/*
+Since dep uses bitfields to store the read and write flags we're bounded by the size
+of yarn_word_t. Also, dep packs both the read and write flags within the same word
+so we can only use half the size of yarn_word_t.
+ */
 yarn_word_t yarn_epoch_max(void) {
-  yarn_word_t max_size = YARN_WORD_BIT_SIZE;
+  yarn_word_t max_size = YARN_WORD_BIT_SIZE / 2;
   yarn_word_t optimal_size = yarn_tpool_size()*2;
 
   return optimal_size < max_size ? optimal_size : max_size;
