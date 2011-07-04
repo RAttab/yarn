@@ -8,7 +8,7 @@
 #define YARN_TIMER_H_
 
 
-#include "types.h"
+#include <yarn/types.h>
 
 #include <time.h>
 
@@ -67,5 +67,21 @@ inline yarn_time_t yarn_timer_to_msec(yarn_time_t t) {
 inline yarn_time_t yarn_timer_to_usec(yarn_time_t t) {
   return t / 1000UL;
 }
+
+
+#define YARN_TIMER_START(name)						\
+  do {									\
+  yarn_time_t name ## _start_th = yarn_timer_sample_thread();		\
+  yarn_time_t name ## _start_sys = yarn_timer_sample_system();
+
+#define YARN_TIMER_STOP(name)						\
+  yarn_time_t name ## _end_sys = yarn_timer_sample_system();		\
+  yarn_time_t name ## _end_th = yarn_timer_sample_thread();		\
+  printf("TIMER - %s:%s - thread=%zu, system=%zu\n", __FUNCTION__,  #name, \
+	 yarn_timer_diff(name ## _start_th, name ## _end_th),		\
+	 yarn_timer_diff(name ## _start_sys, name ## _end_sys));	\
+  fflush(stdout);							\
+  } while(false)
+
 
 #endif // YARN_TIMER_H_
