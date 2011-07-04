@@ -9,7 +9,7 @@ Several helper macros, constants and whatever else I consider helperful.
 #ifndef YARN_HELPER_H_
 #define YARN_HELPER_H_
 
-#include <yarn/types.h>
+#include "yarn/types.h"
 
 #include <assert.h>
 #include <stdlib.h>

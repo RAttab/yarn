@@ -5,9 +5,9 @@
 The main yarn header for the target programs.
  */
 
-#include <yarn.h>
+#include "yarn.h"
 
-#include <yarn/dependency.h>
+#include "yarn/dependency.h"
 #include "tpool.h"
 #include "epoch.h"
 #include "bits.h"

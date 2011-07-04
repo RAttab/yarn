@@ -12,7 +12,7 @@ very difficult to track these types of things.
 #define YARN_DEPENDENCY_H_
 
 
-#include <yarn/types.h>
+#include "types.h"
 
 bool yarn_dep_global_init (size_t ws_size, yarn_word_t index_size);
 bool yarn_dep_global_reset (size_t ws_size, yarn_word_t index_size);

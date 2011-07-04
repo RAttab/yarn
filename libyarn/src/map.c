@@ -7,7 +7,7 @@
 Implements linear probing and 
  */
 
-#include <yarn/types.h>
+#include "yarn/types.h"
 #include "map.h"
 #include "atomic.h"
 

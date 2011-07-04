@@ -14,7 +14,7 @@ era of 30+ core CPUs then this class will need to be updated so that it works be
 #define YARN_EPOCH_H_
 
 
-#include <yarn/types.h>
+#include "yarn/types.h"
 
 
 enum yarn_epoch_status {

@@ -16,7 +16,7 @@ ported to other compilers if we ever get there.
 #define YARN_ATOMIC_H_
 
 
-#include <yarn/types.h>
+#include "yarn/types.h"
 
 
 //! Defines a full memory barrier.

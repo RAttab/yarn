@@ -5,9 +5,9 @@
  */
 
 
-#include <yarn/dependency.h>
+#include "yarn/dependency.h"
 
-#include <yarn/types.h>
+#include "yarn/types.h"
 #include "helper.h"
 #include "epoch.h"
 #include "atomic.h"

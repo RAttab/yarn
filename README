@@ -4,6 +4,15 @@ code using runtime dependency checking.
 The system is composed of :
 
   - libyarn    the runtime kernel for dependency checking and task scheduling.
-  - yarn       executable used to analyse and inject code into a source file.
+  - yarnc      executable used to analyse and inject code into a source file.
+  - yarnb      Benchmarking program used to test perfomances under various conditions.
 
-More will be added here later.
+Building instructions of developpers using git tree. This project uses autotools so the 
+usual steps should work just fine:
+
+autoreconf --install
+./configure
+make
+make check
+
+Note that the check target currently has linking issues so it will probably fail.

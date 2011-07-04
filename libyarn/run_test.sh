@@ -8,5 +8,5 @@ c=0
 while [ $? -eq 0 ]; do
     c=$(($c+1))
     echo -ne "Testing attempt: $c\r"
-    ./check_libyarn 1 > out.log
+    ./test/check_libyarn 1 > out.log
 done

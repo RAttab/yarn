@@ -5,7 +5,7 @@
  */
 
 
-#include <yarn/timer.h>
+#include "yarn/timer.h"
 
 
 extern inline yarn_time_t yarn_time_from_timespec(struct timespec* ts);
