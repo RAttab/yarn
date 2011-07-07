@@ -1,7 +1,12 @@
 
 bin_PROGRAMS = yarnb
 
-yarnb_SOURCES = main.c
+SOURCES_YARNB = \
+	main.c
+
+HEADERS_YARNB =
+
+yarnb_SOURCES = $(SOURCES_YARNB) $(HEADERS_YARNB)
 
 AM_CFLAGS = $(YARN_CFLAGS_DIAG) $(YARN_CFLAGS_LIB)
 AM_CPPFLAGS = -I$(srcdir)/../../libyarn/src

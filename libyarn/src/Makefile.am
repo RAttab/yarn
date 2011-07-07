@@ -4,27 +4,39 @@ LIBADD = $(YARN_LIBADD)
 
 lib_LIBRARIES = libyarn.a
 
-YARN_SRC_LIST = \
-	atomic bits helper timer timestamp \
-	tpool pstore pmem \
-	dependency epoch map yarn
+SOURCES_LIBYARN = \
+	atomic.c \
+	bits.c \
+	helper.c \
+	timer.c \
+	timestamp.c \
+	tpool.c \
+	pstore.c \
+	pmem.c \
+	dependency.c \
+	epoch.c \
+	map.c \
+	yarn.c
 
-#SOURCES_LIBYARN = $(wildcard *.c)
-SOURCES_LIBYARN =  \
-	atomic.c bits.c helper.c timer.c timestamp.c \
-	tpool.c pstore.c pmem.c \
-	dependency.c epoch.c map.c yarn.c
+INCLUDE_LIBYARN = \
+	yarn.h \
+	yarn/types.h \
+	yarn/timer.h \
+	yarn/dependency.h
 
-#INCLUDES_LIBYARN = $(wildcard yarn/*.h)
-INCLUDE_LIBYARN = yarn.h \
-	yarn/types.h yarn/timer.h yarn/dependency.h
+HEADERS_LIBYARN = \
+	$(INCLUDE_LIBYARN) \
+	atomic.h \
+	bits.h \
+	helper.h \
+	timestamp.h \
+	tpool.h \
+	pstore.h \
+	pmem.h \
+	epoch.h \
+	map.h
 
-#HEADERS_LIBYARN = $(wildcard *.h)
-HEADERS_LIBYARN = $(INCLUDE_LIBYARN) \
-	dbh.h \
-	atomic.h bits.h helper.h timestamp.h \
-	tpool.h pstore.h pmem.h \
-	epoch.h map.h
+noinst_HEADERS = dbg.h
 
 libyarn_a_SOURCES = $(SOURCES_LIBYARN) $(HEADERS_LIBYARN)
 
