@@ -156,6 +156,8 @@ bool yarn_exec_simple (yarn_executor_t executor,
 		       yarn_word_t ws_size, 
 		       yarn_word_t index_size) 
 {
+  //  yarn_timer_dbg_set(); 
+
   bool ret;
 
   ret = init_dep(ws_size, index_size);
