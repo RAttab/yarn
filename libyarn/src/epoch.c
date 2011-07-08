@@ -52,6 +52,7 @@ static yarn_atomic_var g_rollback_flag;
 static pthread_mutex_t g_rollback_lock;
 
 static pthread_mutex_t g_next_lock;
+static pthread_cond_t g_next_cond;
 
 // Indicates an epoch that stops the calculations.
 static yarn_atomic_var g_epoch_stop;
@@ -76,11 +77,16 @@ static inline struct epoch_info* get_epoch_info (yarn_word_t epoch) {
 
 
 bool yarn_epoch_init(void) {
-  int ret = pthread_mutex_init(&g_rollback_lock, NULL);
+  int ret;
+  
+  ret = pthread_mutex_init(&g_rollback_lock, NULL);
   if (ret) goto rollback_lock_error;
 
   ret = pthread_mutex_init(&g_next_lock, NULL);
   if (ret) goto next_lock_error;
+
+  ret = pthread_cond_init(&g_next_cond, NULL);
+  if (ret) goto next_cond_error;
 
   g_epoch_max = yarn_epoch_max();
 
@@ -94,6 +100,8 @@ bool yarn_epoch_init(void) {
   //free(g_epoch_list);
  alloc_error:
   pthread_mutex_destroy(&g_next_lock);
+ next_cond_error:
+  pthread_cond_destroy(&g_next_cond);
  next_lock_error:
   pthread_mutex_destroy(&g_rollback_lock);
  rollback_lock_error:
@@ -120,6 +128,7 @@ bool yarn_epoch_reset(void) {
 
 void yarn_epoch_destroy(void) {
   free(g_epoch_list);
+  pthread_cond_destroy(&g_next_cond);
   pthread_mutex_destroy(&g_next_lock);
   pthread_mutex_destroy(&g_rollback_lock);
 }
@@ -191,9 +200,7 @@ static inline bool inc_epoch_next (yarn_word_t* next_epoch) {
     }
 
     if (retry) {
-      YARN_CHECK_RET0(pthread_mutex_unlock(&g_next_lock));
-      pthread_yield();
-      YARN_CHECK_RET0(pthread_mutex_lock(&g_next_lock));
+      YARN_CHECK_RET0(pthread_cond_wait(&g_next_cond, &g_next_lock));
       continue;
     }
     
@@ -221,6 +228,10 @@ bool yarn_epoch_next(yarn_word_t* next_epoch, enum yarn_epoch_status* old_status
     DBG printf("[%zu] - EXECUTING - old_status=%d\n", *next_epoch, *old_status);
     assert(*old_status == yarn_epoch_commit || *old_status == yarn_epoch_rollback);
     
+  }
+  else {
+    // We're done so wakeup anyone still waiting.
+    YARN_CHECK_RET0(pthread_cond_broadcast(&g_next_cond));
   }
 
   YARN_CHECK_RET0(pthread_mutex_unlock(&g_next_lock));
@@ -398,8 +409,11 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
   rollback_next(old_next, start);
   rollback_stop(start);
 
+  YARN_CHECK_RET0(pthread_cond_broadcast(&g_next_cond));
+
   YARN_CHECK_RET0(pthread_mutex_unlock(&g_next_lock));
   YARN_CHECK_RET0(pthread_mutex_unlock(&g_rollback_lock));
+
 }
 
 
@@ -488,6 +502,10 @@ void yarn_epoch_commit_done(yarn_word_t epoch) {
   }
 
   update_stop();
+
+  YARN_CHECK_RET0(pthread_mutex_lock(&g_next_lock));
+  YARN_CHECK_RET0(pthread_cond_signal(&g_next_cond));
+  YARN_CHECK_RET0(pthread_mutex_unlock(&g_next_lock));
 }
 
 void yarn_epoch_set_done(yarn_word_t epoch) {
