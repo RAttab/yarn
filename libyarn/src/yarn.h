@@ -20,7 +20,7 @@ typedef enum yarn_ret (*yarn_executor_t) (const yarn_word_t pool_id, void* data)
 bool yarn_init (void);
 void yarn_destroy (void);
 
-#define YARN_ALL_THREADS 0 // See YARN_TPOOL_ALL_THREADS
+#define YARN_ALL_THREADS ((yarn_word_t)0) // See YARN_TPOOL_ALL_THREADS
 
 bool yarn_exec_simple (yarn_executor_t executor, 
 		       void* data, 
