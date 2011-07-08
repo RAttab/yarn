@@ -51,6 +51,8 @@ static yarn_atomic_var g_rollback_flag;
 // active for a given epoch.
 static pthread_mutex_t g_rollback_lock;
 
+static pthread_mutex_t g_next_lock;
+
 // Indicates an epoch that stops the calculations.
 static yarn_atomic_var g_epoch_stop;
 
@@ -75,7 +77,10 @@ static inline struct epoch_info* get_epoch_info (yarn_word_t epoch) {
 
 bool yarn_epoch_init(void) {
   int ret = pthread_mutex_init(&g_rollback_lock, NULL);
-  if (ret) goto lock_error;
+  if (ret) goto rollback_lock_error;
+
+  ret = pthread_mutex_init(&g_next_lock, NULL);
+  if (ret) goto next_lock_error;
 
   g_epoch_max = yarn_epoch_max();
 
@@ -88,8 +93,10 @@ bool yarn_epoch_init(void) {
  
   //free(g_epoch_list);
  alloc_error:
+  pthread_mutex_destroy(&g_next_lock);
+ next_lock_error:
   pthread_mutex_destroy(&g_rollback_lock);
- lock_error:
+ rollback_lock_error:
   perror(__FUNCTION__);
   return false;
 }
@@ -113,6 +120,7 @@ bool yarn_epoch_reset(void) {
 
 void yarn_epoch_destroy(void) {
   free(g_epoch_list);
+  pthread_mutex_destroy(&g_next_lock);
   pthread_mutex_destroy(&g_rollback_lock);
 }
 
@@ -183,7 +191,9 @@ static inline bool inc_epoch_next (yarn_word_t* next_epoch) {
     }
 
     if (retry) {
+      YARN_CHECK_RET0(pthread_mutex_unlock(&g_next_lock));
       pthread_yield();
+      YARN_CHECK_RET0(pthread_mutex_lock(&g_next_lock));
       continue;
     }
     
@@ -199,18 +209,21 @@ static inline bool inc_epoch_next (yarn_word_t* next_epoch) {
 
 bool yarn_epoch_next(yarn_word_t* next_epoch, enum yarn_epoch_status* old_status) {
 
+  YARN_CHECK_RET0(pthread_mutex_lock(&g_next_lock));
+
   bool ret = inc_epoch_next(next_epoch);
   if (ret) {
     struct epoch_info* info = get_epoch_info(*next_epoch);
-    
-    do {
-      *old_status = yarn_readv(&info->status);
-    } while (yarn_casv(&info->status, *old_status, yarn_epoch_executing) != *old_status);
-    
+
+    *old_status = yarn_readv(&info->status);
+    yarn_writev(&info->status, yarn_epoch_executing);
+        
     DBG printf("[%zu] - EXECUTING - old_status=%d\n", *next_epoch, *old_status);
     assert(*old_status == yarn_epoch_commit || *old_status == yarn_epoch_rollback);
     
   }
+
+  YARN_CHECK_RET0(pthread_mutex_unlock(&g_next_lock));
 
   return ret;
 }
@@ -365,36 +378,27 @@ void yarn_epoch_do_rollback(yarn_word_t start) {
 
   // Supporting multiple rollbacks at once is a headache that I don't want.
   YARN_CHECK_RET0(pthread_mutex_lock(&g_rollback_lock));
+  YARN_CHECK_RET0(pthread_mutex_lock(&g_next_lock));
 
   yarn_word_t epoch = start;
-  yarn_word_t old_next;
+  yarn_word_t old_next = yarn_readv(&g_epoch_next);
 
-  do {
-    old_next = yarn_readv(&g_epoch_next);
-
-    // Every epoch following next are beyond last or have a rollback status
-    while(yarn_timestamp_comp(epoch, old_next) < 0) {
-      struct epoch_info* info = get_epoch_info(epoch);
+  // Every epoch following next are beyond last or have a rollback status
+  while(yarn_timestamp_comp(epoch, old_next) < 0) {
+    struct epoch_info* info = get_epoch_info(epoch);
       
-      bool skip_epoch = set_rollback_status(info, epoch);
-      if(!skip_epoch) {
-	set_rollback_flag(epoch);
-      }
-      
-      epoch++;
+    bool skip_epoch = set_rollback_status(info, epoch);
+    if(!skip_epoch) {
+      set_rollback_flag(epoch);
     }
+      
+    epoch++;
+  }
 
-  /*
-  Reset next if it hasn't changed.
-  If next has changed then new epochs were allocated and we need to process those too.
-  Note that there's an issue were rollback is perpetually chasing next() and can only
-    catch up once all the available epochs have been allocated.
-    We shove this into the "rollbacks are rare so we can absorb it" bin-of-lazyness.
-  */
-  } while(!rollback_next(old_next, start));
-
+  rollback_next(old_next, start);
   rollback_stop(start);
 
+  YARN_CHECK_RET0(pthread_mutex_unlock(&g_next_lock));
   YARN_CHECK_RET0(pthread_mutex_unlock(&g_rollback_lock));
 }
 
