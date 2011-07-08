@@ -23,7 +23,7 @@ AC_PROG_RANLIB
 #AM_PROC_CC_C_0
 
 
-PKG_CHECK_MODULES([CHECK], [check >= 0.9.4]) 
+# PKG_CHECK_MODULES([CHECK], [check >= 0.9.4]) 
 
 
 # Check for libraries
@@ -31,8 +31,9 @@ PKG_CHECK_MODULES([CHECK], [check >= 0.9.4])
 
 # Check for header files
 AC_HEADER_STDC
-AC_CHECK_HEADERS([stddef.h stdint.h stdlib.h sys/time.h unistd.h, stdbool.h])
+AC_HEADER_ASSERT
 
+AC_CHECK_HEADERS([stddef.h stdint.h stdlib.h sys/time.h unistd.h, stdbool.h])
 
 # Check for typedef, structs and comp carac
 AC_PROG_CC_C99
