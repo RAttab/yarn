@@ -116,9 +116,9 @@ int main (int argc, char** argv) {
   printf(INFO "\tSpeedup delta = %2.2f\n", speedup_step);
   if (g_use_log) {
     printf(INFO "\tLog file = %s\n", argv[1]);
+    fprintf(g_log_file, "Threads"CSV_SEP"Speedup"CSV_SEP"Time\n");
   }
 
-  fprintf(g_log_file, "Threads"CSV_SEP"Speedup"CSV_SEP"Time\n");
 
   printf(INFO "\n");
   printf(INFO "Warming up...\n");
@@ -159,15 +159,22 @@ int main (int argc, char** argv) {
       //    speedup_time = speedup_lower_bound(speedup, start_time, time_step);
       start_time = speedup_time;
 
-      fprintf(g_log_file, "%zu"CSV_SEP"%.1f"CSV_SEP"%zu\n", 
-	      threads, speedup, speedup_time);
+      if (g_use_log) {
+	fprintf(g_log_file, "%zu"CSV_SEP"%.1f"CSV_SEP"%zu\n", 
+		threads, speedup, speedup_time);
+      }
       printf(INFO "(%2zu, %2.2f) = %9zuns\n", threads, speedup, speedup_time);
       fflush(stdout);
     }
-    fflush(g_log_file);
+
+    if (g_use_log) {
+      fflush(g_log_file);
+    }
   }
 
-  fclose(g_log_file);
+  if (g_use_log) {
+    fclose(g_log_file);
+  }
 
   yarn_destroy();
   return 0;
