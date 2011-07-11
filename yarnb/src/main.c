@@ -44,6 +44,8 @@ struct task {
 #define WARN  "WARN  - "
 #define ERROR "ERROR - "
 
+#define CSV_SEP ";"
+
 double get_speedup(yarn_time_t wait_time, yarn_word_t thread_count);
 
 int speedup_search (const double target_speedup,
@@ -59,6 +61,8 @@ enum yarn_ret run_speculative (yarn_word_t pool_id, void* task);
 
 static double g_max_speedup;
 static double g_min_speedup;
+static bool g_use_log;
+static FILE* g_log_file;
 
 
 inline int comp_speedup (double a, double b) {
@@ -83,8 +87,17 @@ inline int comp_time (yarn_time_t a, yarn_time_t b) {
 
 
 int main (int argc, char** argv) {
-  (void) argc;
-  (void) argv;
+  
+  if (argc > 1) {
+    g_use_log = true;
+    g_log_file = fopen(argv[1], "w");
+    if(!g_log_file) {
+      perror(__FUNCTION__);
+      printf(ERROR "Invalid log file.");
+      return 1;
+    }
+  }
+
 
   bool ret = yarn_init();
   if (!ret) goto yarn_error;
@@ -101,6 +114,11 @@ int main (int argc, char** argv) {
   printf(INFO "\tTime range = [0ns, %zuns]\n", end_time);
   printf(INFO "\tSpeedup min = %2.2f\n", min_speedup);
   printf(INFO "\tSpeedup delta = %2.2f\n", speedup_step);
+  if (g_use_log) {
+    printf(INFO "\tLog file = %s\n", argv[1]);
+  }
+
+  fprintf(g_log_file, "Threads"CSV_SEP"Speedup"CSV_SEP"Time\n");
 
   printf(INFO "\n");
   printf(INFO "Warming up...\n");
@@ -112,7 +130,7 @@ int main (int argc, char** argv) {
 
   printf(INFO "\n");
   printf(INFO "Executing the benchmark...\n");
-  fflush(stdout);
+  fflush(stdout);  
  
   for (yarn_word_t threads = 1; threads <= yarn_thread_count(); ++threads) {
     start_time = 0;
@@ -141,10 +159,15 @@ int main (int argc, char** argv) {
       //    speedup_time = speedup_lower_bound(speedup, start_time, time_step);
       start_time = speedup_time;
 
+      fprintf(g_log_file, "%zu"CSV_SEP"%.1f"CSV_SEP"%zu\n", 
+	      threads, speedup, speedup_time);
       printf(INFO "(%2zu, %2.2f) = %9zuns\n", threads, speedup, speedup_time);
       fflush(stdout);
     }
+    fflush(g_log_file);
   }
+
+  fclose(g_log_file);
 
   yarn_destroy();
   return 0;
