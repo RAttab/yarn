@@ -7,6 +7,7 @@
 
 # Build outputs
 *.o
+*.so
 *.exe
 *.d
 *.a
@@ -14,8 +15,15 @@
 .deps
 *.in
 
+# LLVM build system artefacts
+Debug
+Debug+Assert
+Release
+*.bak
+.dir
+
 # The actual Makefiles produced
-Makefile
+# Makefile - Can't because of LLVM build system...
 
 # The local aclocal.m4 file
 aclocal.m4
