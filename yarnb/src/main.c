@@ -85,6 +85,54 @@ inline int comp_time (yarn_time_t a, yarn_time_t b) {
 }
 
 
+static double calc_reference (void) {
+#define N 100 // yes, I'll burn in hell for this... Shut it.
+  static double a[N];
+  static double b[N];
+  static double c[N];
+  for (int i = 0; i < N; ++i) {
+    a[i] = (double)1 / (double)i;
+    b[i] = (double)1 - a[i];
+  }
+  
+  // Actual bench
+  // This could be optimized in a million different ways so it only gives a rough idea.
+  // Might not be a super good idea.
+  yarn_time_t start = yarn_timer_sample_thread();
+  for (int i = 0; i < N; ++i) {
+    c[i] = a[i] / b[i];
+  }
+  yarn_time_t div_diff = yarn_timer_diff(start, yarn_timer_sample_thread());
+
+  start = yarn_timer_sample_thread();
+  for (int i = 0; i < N; ++i) {
+    c[i] = a[i] * b[i];
+  }
+  yarn_time_t mul_diff = yarn_timer_diff(start, yarn_timer_sample_thread());
+  
+
+  printf(INFO "\n");
+  printf(INFO "Reference point:\n");
+  printf(INFO "\tOp count: %d\n", N);  
+  printf(INFO "\tFP Mul: %zuns\n", mul_diff);
+  printf(INFO "\tFP Div: %zuns\n", div_diff);
+  
+  // to kill any dead-code optimizations.
+  double acc;
+  for (int i = 0; i < N; ++i) {
+    acc += c[i];
+  }
+  return acc;
+}
+
+static void warm_up (void) {
+  printf(INFO "\n");
+  printf(INFO "Warming up...\n");
+  fflush(stdout);
+  for (int i = 0; i < 10; ++i) {
+    (void) get_speedup(0, 1);
+  }
+}
 
 int main (int argc, char** argv) {
   
@@ -119,14 +167,8 @@ int main (int argc, char** argv) {
     fprintf(g_log_file, "Threads"CSV_SEP"Speedup"CSV_SEP"Time\n");
   }
 
-
-  printf(INFO "\n");
-  printf(INFO "Warming up...\n");
-  fflush(stdout);
-  for (int i = 0; i < 10; ++i) {
-    (void) get_speedup(0, 1);
-  }
-
+  calc_reference();
+  warm_up();
 
   printf(INFO "\n");
   printf(INFO "Executing the benchmark...\n");
