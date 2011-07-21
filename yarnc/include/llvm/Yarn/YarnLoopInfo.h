@@ -20,6 +20,7 @@
 #include <llvm/Module.h>
 #include <llvm/BasicBlock.h>
 #include <vector>
+#include <map>
 
 
 namespace yarn {
@@ -59,6 +60,10 @@ namespace yarn {
     inline bool isRead () const { return IsRead; }
     inline bool isWrite () const {return IsWrite; }
 
+    /// Debug.  
+    inline void print (llvm::raw_ostream &OS) const;
+
+
   private:
     
     // It's a friend because it needs to manipulate the IsRead/Write members.
@@ -70,30 +75,37 @@ namespace yarn {
 /// Contains the dependency defined by the loops' phi nodes.
 ///
   class LoopValue : public Noncopyable {
-    llvm::PHINode* Node;
+    
+    // Node that defines the Entry and Exiting Value
+    llvm::PHINode* HeaderNode;
+    //Node that uses the Exiting Value to define the Exit value.
+    llvm::PHINode* FooterNode;
+
+    // Value of the dependency before the loop.
     llvm::Value* EntryValue;
-    llvm::Value* ExitValue;
 
   public:
     
-    LoopValue (llvm::PHINode* node) :
-      Node(node),
-      EntryValue(NULL),
-      ExitValue(NULL)
+    LoopValue () :
+      HeaderNode(NULL), FooterNode(NULL), EntryValue(NULL)
     {}
 
     /// The phi node in the loop header used to determine what the 
-    /// entry and exit value is.
-    inline llvm::PHINode* getPhiNode () const { return Node; }
+    /// entry and exiting values are.
+    inline llvm::PHINode* getHeaderNode () const { return HeaderNode; }
+    /// The phi node in the loop footer used to determine what the 
+    /// exit value is.
+    inline llvm::PHINode* getFooterNode () const { return FooterNode; }
 
     /// Value that existed before the loop that is used within the loop.
     /// Null if the value isn't used before the loop.
-    /// \todo This will always be non-null because it's to hard to detect the other way.
     inline llvm::Value* getEntryValue () const { return EntryValue; }
-
     /// Value that is used within the loop and that continues to exist after the loop.
     /// Null if the value isn't used after the loop.
-    inline llvm::Value* getExitValue () const { return ExitValue; }
+    inline llvm::Value* getExitValue () const { return FooterNode; }
+
+    /// Debug.  
+    inline void print (llvm::raw_ostream &OS) const;
 
   private:
     
@@ -118,8 +130,10 @@ namespace yarn {
 
   private:
 
+    llvm::LoopInfo* LI;
     llvm::AliasAnalysis* AA;
     llvm::DominatorTree* DT;
+    llvm::PostDominatorTree* PDT;
     
     llvm::Loop* L;
     ValueList Dependencies;
@@ -128,7 +142,13 @@ namespace yarn {
 
   public:
     
-    YarnLoop(llvm::Loop* l, llvm::AliasAnalysis* aa, llvm::DominatorTree*);
+    YarnLoop(llvm::Loop* l, 
+	     llvm::LoopInfo* li,
+	     llvm::AliasAnalysis* aa, 
+	     llvm::DominatorTree* dt,
+	     llvm::PostDominatorTree* pdt);
+
+    ~YarnLoop();
 
     /// Returns the llvm::Loop object that represents our loop.
     inline llvm::Loop* getLoop () const { return L; }
@@ -158,29 +178,28 @@ namespace yarn {
     /// Only supports LoopValues for now.
     /// \todo Could also do LoopPointer if we know that they're aliases.
     BBPosList findStorePos (const Value* value) const;
-    //  If value isa PHINode
-    //    list.pushback(findStorePos(valueBranchA));
-    //    list.pushback(findStorePos(valueBranchB));
-    //  else list.pushback(toPos(value)+1);
-    //  return list;
+    //  Same as findLoadPos but with PDT 
 
     
     /// Debug.  
-    inline void print (llvm::raw_ostream &OS) const;
+    void print (llvm::raw_ostream &OS) const;
     /* 
-    {
-      m_loop->print(OS, m_loop->getLoopDepth());
-    }
     */
 
   private:
 
+    typedef std::map<llvm::Value*, LoopValue*>  ValueMap;
+    ValueMap ExitingValueMap;
+
     // Loops over the instructions and dispatches to functions below.
-    void processLoop (llvm::Loop* L);
-    // Called for PHINode in the loop header fills in Dependencies.
+    void processLoop ();
+    // Called for PHINode in the loop header and fills in Dependencies.
     void processHeaderPHINode (llvm::PHINode* N);
+    // Called for PHINode in the loop footer and fills in Dependencies.
+    void processFooterPHINode(PHINode* N);
     // Called for a store/load instruction and fills in Pointers.
-    void processPointer (llvm::Instruction* I);
+    void processStore (llvm::StoreInst* SI);    
+    void processLoad (llvm::LoadInst* SI);
     // Called for anything else that has operands and fills in Invariants.
     void processInvariants (llvm::User* U);
 
@@ -199,7 +218,6 @@ namespace yarn {
 
     llvm::LoopInfo* LI;
     llvm::AliasAnalysis* AA;
-    llvm::DominatorTree* DT;
 
     LoopList Loops;
 
@@ -212,10 +230,19 @@ namespace yarn {
     inline iterator end () { return Loops.end(); }
     bool empty () const { return Loops.empty(); }
     
-    virtual void getAnalysisUsage (llvm::AnalysisUsage &Info) const;    
+    virtual void getAnalysisUsage (llvm::AnalysisUsage &AU) const;    
     virtual bool runOnFunction (llvm::Function& F);
     virtual void releaseMemory ();
-    virtual void print (std::ostream &O, const llvm::Module *M) const;
+    virtual void print (llvm::raw_ostream &O, const llvm::Module *M) const;
+
+  private:
+
+    /// Checks the loop to make sure it doesn't contain any unsupported features.
+    bool checkLoop (llvm::Loop* L);
+    
+    /// Determines whether the loop is worth instrumenting or not.
+    bool keepLoop (YarnLoop* YL);
+
 
   };
 

@@ -40,6 +40,19 @@ namespapce yarn {
   };
 
 
+//===----------------------------------------------------------------------===//
+/// Utility class for std::vector
+///
+  struct VectorUtil<typename T> {
+    static void free (std::vector<T*>& v) {
+      while(!v.empty()) {
+	T* = v.pop_back();
+	delete T;
+      }
+    }
+  }
+
+
 }; // namespace yarn
 
 #endif // YARN_COMMON_H
