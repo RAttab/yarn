@@ -21,6 +21,7 @@
 #include <llvm/BasicBlock.h>
 #include <vector>
 #include <map>
+#include <set>
 
 
 namespace yarn {
@@ -42,23 +43,22 @@ namespace yarn {
 /// Describes a pointer used in the loop.
 ///
   class LoopPointer : public Noncopyable {
-    llvm::Value* Pointer;
-    bool IsRead;
-    bool IsWrite;
+  public:
+    
+    typedef std::vector<Value*> AliasList;
+
+  private:
+
+    AliasList Aliases;
 
   public:
     
-    LoopPointer (llvm::Value* ptr) : 
-      Pointer(ptr),
-      IsRead(false),
-      IsWrite(false)
-    {}
+    LoopPointer () : Aliases() {}
 
-    inline llvm::Value* getPointer() const { return Pointer; }
 
-    inline bool isReadOnly () const { return IsRead && !IsWrite; }
-    inline bool isRead () const { return IsRead; }
-    inline bool isWrite () const {return IsWrite; }
+    /// Returns the list of pointers that are known to always be aliases.
+    inline const AliasList& getAliasList () const { return AliasList; }
+
 
     /// Debug.  
     inline void print (llvm::raw_ostream &OS) const;
@@ -68,6 +68,7 @@ namespace yarn {
     
     // It's a friend because it needs to manipulate the IsRead/Write members.
     friend class YarnLoop;
+
   };
 
 
@@ -128,6 +129,7 @@ namespace yarn {
     typedef llvm::BasicBlock::iterator BBPos;
     typedef std::vector<BBPos> BBPosList;
 
+
   private:
 
     llvm::LoopInfo* LI;
@@ -137,7 +139,12 @@ namespace yarn {
     
     llvm::Loop* L;
     ValueList Dependencies;
+    
+    // Represents pointers who are known to treat with aliased memory.
     PointerList Pointers;
+
+    // Represents values that are used outside the loop but only read within the loop.
+    // May be a pointer or a regular value.
     InvariantList Invariants;
 
   public:
@@ -167,7 +174,7 @@ namespace yarn {
     /// dominate all the possible reads.
     /// Only supports LoopValues for now.
     /// \todo Could also do LoopPointer if we know that they're aliases.
-    BBPos findLoadPos (const Value* value) const;
+    BBPosList findLoadPos (const Value* value) const;
     //  Find the BB that dominates all the read's parent.
     //    if that BB contains a load
     //      return that load.
@@ -179,7 +186,6 @@ namespace yarn {
     /// \todo Could also do LoopPointer if we know that they're aliases.
     BBPosList findStorePos (const Value* value) const;
     //  Same as findLoadPos but with PDT 
-
     
     /// Debug.  
     void print (llvm::raw_ostream &OS) const;
@@ -188,20 +194,19 @@ namespace yarn {
 
   private:
 
-    typedef std::map<llvm::Value*, LoopValue*>  ValueMap;
-    ValueMap ExitingValueMap;
+    typedef std::map<llvm::Value*, LoopValue*>  ValueMap;    
+    typedef std::set<llvm::Instruction*> PointerInstSet;
 
     // Loops over the instructions and dispatches to functions below.
     void processLoop ();
     // Called for PHINode in the loop header and fills in Dependencies.
-    void processHeaderPHINode (llvm::PHINode* N);
+    void processHeaderPHINode (llvm::PHINode* N, ValueMap& ExitingValueMap);
     // Called for PHINode in the loop footer and fills in Dependencies.
-    void processFooterPHINode(PHINode* N);
+    void processFooterPHINode (llvm::PHINode* N, ValueMap& ExitingValueMap);
     // Called for a store/load instruction and fills in Pointers.
-    void processStore (llvm::StoreInst* SI);    
-    void processLoad (llvm::LoadInst* SI);
+    void processPointers (PointerInstSet& loadSet, PointerInstSet& storeSet);
     // Called for anything else that has operands and fills in Invariants.
-    void processInvariants (llvm::User* U);
+    void processInvariants (llvm::Instruction* I);
 
   };
 

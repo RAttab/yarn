@@ -21,6 +21,7 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/ADT/Statistic.h>
+#include <algorithm>
 using namespace llvm;
 using namespace yarn;
 
@@ -87,28 +88,40 @@ YarnLoop::~YarnLoop() {
 
 void YarnLoop::processLoop () {
 
+  ValueMap exitingValueMap;
+  PointerInstSet loadSet;
+  PointerInstSet storeSet;
+
   for (Loop::iterator bb = L->block_begin(), bbEnd = L->block_end(); bb != bbEnd; ++bb) {
     bool isHeader = *i == L->getHeader();
 
     for (BasicBlock::iterator i = (*bb)->begin(), iEnd = (*bb)->end(); i != iEnd; ++i) {
 
       if (isHeader && PhiNode phi = dyn_cast<PHINode>(*i)) {
-	processHeaderPHINode(phi);
+	processHeaderPHINode(phi, exitingValueMap);
       }
+
       else if(StoreInst* si = dyn_cast<StoreInst>(*i)) {
-	processStore(si);
+	Value* ptr = si->getPointerOperand();
+	storeSet.insert(ptr);
+	loadSet.erase(ptr);
       }
+
       else if (LoadInst* li = dyn_cast<LoadInst>(*i)) {
-	processLoad(li);
+	Value* ptr = li->getPointerOperand();
+	if (storeSet.find(ptr) == storeSet.end()) {
+	  loadSet.insert(ptr);
+	}
       }
-      else if (User* u = dyn_cast<User>(*i)){
-	processInvariants(u);
-      }
-      
+
+      else if (Instruction* inst = dyn_cast<User>(*i)){
+	processInvariants(inst);
+      }      
 
     }
   }
 
+  processPointers(loadSet, storeSet);
 
   const BBList& exitBlocks = L->getExitBlocks();
   if (exitBlocks.size() == 1) {
@@ -116,7 +129,7 @@ void YarnLoop::processLoop () {
     for (BasicBlock::iterator i = bb->begin(), iEnd = bb->end(); i != iEnd; ++i) {
       
       if (PHINode* phi = dyn_cast<PHINode>(*i)) {
-	processFooterPHINode(phi);
+	processFooterPHINode(phi, exitingValueMap);
       }
     }
     
@@ -131,7 +144,7 @@ void YarnLoop::processLoop () {
 // one incomming edge into the loop. This means that the header of the loop will contain
 // PHI nodes with all the dependencies used before the loop. We can also use the PHI
 // nodes to get the exiting values which can later be used by the processFooterPHINode.
-void YarnLoop::processHeaderPHINode (PHINode* PHI) {
+void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
   BasicBlock* loopPred = L->getPredecessor();
 
   LoopValue* lv = new LoopValue();
@@ -142,7 +155,7 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI) {
 
   Value* exitingValue;
 
-  for (int i = 0; i < PHI->getNumIncomingValues(); ++i) {
+  for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
     BasicBlock* incBB = PHI->getIncomingBasicBlock(i);
     Value* incValue = PHI->getIncommingValue(i);
 
@@ -166,11 +179,11 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI) {
 // which contains PHI nodes of dependencies that are used after the loop.
 // This functions looks at these and, if possible, matches them to the values found in
 // processHeaderPHINode.
-void YarnLoop::processFooterPHINode(PHINode* PHI) {
+void YarnLoop::processFooterPHINode(PHINode* PHI, ValueMap& ExitingValueMap) {
 
   LoopValue* lv;
 
-  for (int i = 0; i < PHI->getNumIncomingValues(); ++i) {
+  for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
     BasicBlock* incBB = PHI->getIncomingBasicBlock(i);
     Value* incValue = PHI->getIncommingValue(i);
 
@@ -197,20 +210,237 @@ void YarnLoop::processFooterPHINode(PHINode* PHI) {
 }
 
 
-void YarnLoop::processPointer (Instruction* I) {
+namespace {
+
+  typedef std::map<Value*, LoopPointer*> PointerMap;
+
+  LoopPointer* isKnownAlias (AliasAnalysis* AA, 
+			     const PointerMap& StoreMap, 
+			     Value* Ptr,
+			     bool Strict) 
+  {
+
+    for(PointerMap::const_iterator it = StoreMap.begin(), endIt = StoreMap.end(); 
+	it != endIt; ++it)
+    {
+      AliasResult ar = AA->alias((*it).first, Ptr);
+      
+      if (strict && ar == MustAlias) {
+	return (*it).second;
+      }
+      else if (!strict && ar) {
+	return (*it).second;
+      }
+    }
+
+    return NULL;
+  }
+
+}; // Anonymous namespace
+
+
+/// \todo This will pick up strictly local load and stores that may not alias with
+///   another loop iteration. So a pointer that manipulates a piece of memory that was
+///   allocated and freed during the same iteration, will be instrumented.
+///   Not sure how to find and filter out these pointers.
+void YarnLoop::processPointers (PointerInstSet& LoadSet, PointerInstSet& StoreSet) {
+
+  PointerMap storeMap;
+
+  for (PointerInstSet::iterator it = StoreSet.begin(), itEnd = StoreSet.end(); 
+       it != iEnd; ++it)
+  {
+    LoopPointer* lp = isKnownAlias(AA, storeMap, *it, true);
+    if (!lp) {
+      lp = new LoopPointer();
+      Pointers.push_back(*it);
+    }
+
+    lp->Aliases.push_back(*it);
+    storeMap[*it] = lp;
+  }
+
+  PointerInstSet::iterator it = LoadSet.begin();
+  PointerInstSet::iterator itEnd = LoadSet.end(); 
+  while (it != itEnd) {
+    
+    // If we're a strict alias then just add ourself to our alias.
+    LoopPointer* lp = isKnownAlias(AA, storeMap, *it, true);
+    if (lp) {
+      lp->Aliases.push_back(*it);
+      continue;
+    }
+
+    // If we might alias then we still need to instrument.
+    if (isKnownAlias(AA, storeMap, *it, false) != NULL) {
+      lp = new LoopPointer();
+      lp->Aliases.push_back(*it);
+      Pointers.push_back(*it);
+      continue;
+    }
+
+    // We only read the pointer so check if we're an invariant.
+    if (L->isLoopInvariant(*it)) {
+      Invariants.push_back(*it);
+    }
+    
+  }  
 
 }
 
-void YarnLoop::processInvariants (User* U) {
+
+// An invariant means that 
+void YarnLoop::processInvariants (Instruction* Inst) {
+
+  for (unsigned int i = 0, iEnd = Inst->getNumOperands(); i < iEnd; ++i) {
+    Value* operand = Inst->getOperand(i);
+    if (L->isLoopInvariant(operand)) {
+      Invariants.push_back(operand);
+    }
+  }
 
 }
 
 
-BBPos YarnLoop::findLoadPos (const Value* value) const {
+namespace {
+  
+  class BBInstPredicate : public std::unary_function<bool, Instruction&> {
 
+    Instruction* ToFind;
+
+  public :
+
+    BBInstPredicate (Instruction* toFind) : ToFind(toFind) {}
+    bool operator() (const Instruction& inst) {
+      return &inst == ToFind;
+    }
+
+  };
+
+}; // Anonymous namespace
+
+
+/// \todo This is currently not optimal.
+///   If the two earliest stores are done on two parallel branches then we should
+///   return the two load instructions and not their dominator.
+BBPosList YarnLoop::findLoadPos (const Value* Value) const {
+  // Find the common dominator for all the load operations.
+  BasicBlock* loadBB = NULL;
+  for (Value::const_use_iterator it = Value->begin(), endIt = Value->end();
+       it != endIt; ++it)
+  {
+    BasicBlock* bb = (*it)->getParent();
+    if (loadBB == NULL) {
+      loadBB = bb;
+      continue;
+    }
+
+    loadBB = DT->findNearestCommonDominator(loadBB, bb);
+    assert(loadBB && 
+	   "LoopSimplify ensures that there's always a common dominator.");
+  }
+
+  // If the common dominator contains a load instruction, 
+  //    return the pos right before it.
+  // otherwise return the last position in the BB.
+  BBPos pos = loadBB->back();
+  for (Value::const_use_iterator it = Value->begin(), endIt = Value->end();
+       it != endIt; ++it)
+  {
+    BBInstPredicate pred(*it);
+    BasicBlock::iterator findIt = std::find_if(loadBB->begin(), loadBB->end(), pred);
+    if (findIt != loadBB->end()) {
+      pos = findIt;
+      break;
+    }
+    
+  }  
+
+  BBPosList posList;
+  posList.push_back(pos);
+  return posList;
 }
 
-BBPosList YarnLoop::findStorePos (const Value* value) const {
+namespace {
+
+  typedef Instruction* InstructionList;
+
+  void findWriteInstructions (PHINode* PHI, InstructionList& OutList) {
+
+    for (int i = 0; i < PHI->getNumIncomingValues(); ++i) {
+
+      BasicBlock* incBB = PHI->getIncomingBasicBlock(i);
+      Value* incValue = PHI->getIncommingValue(i);
+
+      if (PHINode* node = dyn_cast<PHINode>(incValue)) {
+	// Avoid the infinit loop.
+	if (PHI->getParent() == L->getHeader()) {
+	  continue;
+	}
+	findWriteInstructions(node, OutList);
+      }
+
+      else if (Instruction* inst = dyn_cast<Instruction>(incValue)) {
+	OutList.push_back(inst);
+      }
+
+    }
+
+  }
+
+}; // Anonymous namespace
+
+BBPosList YarnLoop::findStorePos (const Value* Value) const {
+  Instructionlist storeList;
+
+  // Gather the list of all the non-phi store instruction for the value.
+  if (PHINode* phi = dyn_cast<PHINode>(value)) {
+    findWriteInstructions(phi, storeList);
+  }
+  else if (Instruction* inst = dyn_cast<Instruction*>(Value)) {
+    storeList.push_back(Value);
+  }
+  else {
+    assert(false && "findStore requires an instruction as an input.");
+  }
+  
+  
+  // Find the common dominator for all the load operations.
+  BasicBlock* storeBB = NULL;
+  for (InstructionList::iterator it = storeList.begin(), endIt = storeList.end();
+       it != endIt; ++it)
+  {
+    BasicBlock* bb = (*it)->getParent();
+    if (storeBB == NULL) {
+      storeBB = bb;
+      continue;
+    }
+
+    storeBB = PDT->findNearestCommonDominator(storeBB, bb);
+    assert(storeBB && 
+	   "LoopSimplify ensures that there's always a common dominator.");
+  }
+
+  // If the common dominator contains a load instruction, 
+  //    return the pos right after it.
+  // otherwise return the first valid position in the BB.
+  BBPos pos = storeBB->getFristNonPHI();
+  for (InstructionList::iterator it = storeList.begin(), endIt = storeList.end();
+       it != endIt; ++it)
+  {
+    BBInstPredicate pred(*it);
+    BasicBlock::iterator findIt = std::find_if(storeBB->begin(), storeBB->end(), pred);
+    if (findIt != storeBB->end()) {
+      pos = findIt;
+      pos++;
+      break;
+    }
+    
+  }  
+
+  BBPosList posList;
+  posList.push_back(pos);
+  return posList;
 
 }
 
