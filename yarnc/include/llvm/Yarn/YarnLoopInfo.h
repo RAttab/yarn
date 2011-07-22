@@ -108,12 +108,69 @@ namespace yarn {
     /// Debug.  
     inline void print (llvm::raw_ostream &OS) const;
 
-  private:
+  private :
     
     /// Friend because it needs to manipulate the Entry/ExitValue.
     friend class YarnLoop;
 
   };
+
+//===----------------------------------------------------------------------===//
+/// Represents that type of instrumentation that needs to take place.
+  enum InstrType {
+    InstrLoad = 1,
+    InstrStore = 2
+  };
+
+
+//===----------------------------------------------------------------------===//
+/// Holds the pointer instruction that needs to be instrumented.
+  class PointerInsertPoint : public Noncopyable {
+    
+    InstrType Type;
+    llvm::Instruction* I;
+
+  public :
+    
+    PointerInsertPoint (InstrType t, llvm::Instruction* i) : 
+      Type(t),
+      I(i) 
+    {}
+
+    inline InstrType getType () const { return Type; }
+    /// Returns the instruction to instrument.
+    inline llvm::Instruction* getInstruction () const { return I; }
+
+  };
+
+//===----------------------------------------------------------------------===//
+/// Indicates where the load/store instrumentation for a value should placed.
+  class ValueInsertPoint : public Noncopyable {
+    
+    InstrType Type;
+    llvm::Value* V;
+
+    // Instrumentation will happen AFTER this instruction.
+    llvm::Instruction* Pos;
+
+  public :
+
+    ValueInsertPoint (InstrType t, llvm::Value* v, llvm::Instruction p) : 
+      Type(t),
+      V(v), 
+      Pos(p) 
+    {}
+
+    inline InstrType getType () const  { return Type; }
+    /// Returns the value to load/store.
+    inline llvm::Value* getValue () const { return V; }
+    /// The instrumentation should take place AFTER the instruction returned.
+    inline llvm::Instruction* getPosition () const { return Pos; }
+    
+  };
+
+
+  
 
 
 //===----------------------------------------------------------------------===//
@@ -125,10 +182,12 @@ namespace yarn {
     typedef std::vector<LoopValue*> ValueList;
     typedef std::vector<LoopPointer*> PointerList; 
     typedef std::vector<llvm::Value*> InvariantList;
+   
+    typedef std::vector<PointerInsertPoint*> PtrInsertList;
+    typedef std::vector<ValueInsertPoint*> ValueInsertList;
 
-    typedef llvm::BasicBlock::iterator BBPos;
+    typedef llvm::Instruction* BBPos;
     typedef std::vector<BBPos> BBPosList;
-
 
   private:
 
@@ -138,14 +197,19 @@ namespace yarn {
     llvm::PostDominatorTree* PDT;
     
     llvm::Loop* L;
+
+    /// Represents a list of values that are used within and before/after the loop.
     ValueList Dependencies;
     
-    // Represents pointers who are known to treat with aliased memory.
+    /// Represents pointers who are known to treat with aliased memory.
     PointerList Pointers;
 
-    // Represents values that are used outside the loop but only read within the loop.
-    // May be a pointer or a regular value.
+    /// Represents values that are used outside the loop but only read within the loop.
+    /// May be a pointer or a regular value.
     InvariantList Invariants;
+
+    PtrInsertList PtrInstrPoints;
+    ValueInsertList ValueInstrPoints;
 
   public:
     
@@ -158,34 +222,28 @@ namespace yarn {
     ~YarnLoop();
 
     /// Returns the llvm::Loop object that represents our loop.
-    inline llvm::Loop* getLoop () const { return L; }
+    inline const llvm::Loop* getLoop () const { return L; }
 
     /// List of all the values that need to be instrumented.
-    inline ValueList& getDependencies () const { return Dependencies; }
+    inline const ValueList& getDependencies () const { return Dependencies; }
     
     /// List of all the pointers that need to be instrumented.
-    inline PointerList& getPointers () const { return Pointers; }
+    inline const PointerList& getPointers () const { return Pointers; }
 
     /// List of all the loop invariants that are needed but should not be instrumented.
     /// There's no overlap between tthe getDependencies and the getPointers list.
-    inline InvariantList& getInvariants() const { return Invariants; }
-    
-    /// Finds the earliest point where a yarn_load can occur that will 
-    /// dominate all the possible reads.
-    /// Only supports LoopValues for now.
-    /// \todo Could also do LoopPointer if we know that they're aliases.
-    BBPosList findLoadPos (const Value* value) const;
-    //  Find the BB that dominates all the read's parent.
-    //    if that BB contains a load
-    //      return that load.
-    //    else return the end of the block.
+    inline const InvariantList& getInvariants () const { return Invariants; }
 
-    /// Finds the latest point where a yarn_store can occur that will be dominated
-    /// by all the possible writes.
-    /// Only supports LoopValues for now.
-    /// \todo Could also do LoopPointer if we know that they're aliases.
-    BBPosList findStorePos (const Value* value) const;
-    //  Same as findLoadPos but with PDT 
+    /// Instrumentation points for the pointer dependencies.
+    inline const PtrInstrList& getPtrInstrPoints () const { return PtrInstrPoints; }
+
+    /// Instrumentation points for the value dependencies.
+    inline const ValueInstrList& getValueInstrPoints () const { return ValueInstrPoints; }
+
+    /// Fills a ValueMap with all the values that were discovered by this pass.
+    /// This allows us to keep our analysis after we copy the target loop.
+    void fillValueMap (llvm::ValueMap& VMap) const;
+    
     
     /// Debug.  
     void print (llvm::raw_ostream &OS) const;
@@ -207,6 +265,23 @@ namespace yarn {
     void processPointers (PointerInstSet& loadSet, PointerInstSet& storeSet);
     // Called for anything else that has operands and fills in Invariants.
     void processInvariants (llvm::Instruction* I);
+
+    /// Finds the instrumentation points for all the pointer dependencies.
+    void processPtrPoints ();
+    /// Finds the instrumentation points for all the value dependencies.
+    void processValuePoints ();
+
+    /// Finds the earliest point where a yarn_load can occur that will 
+    /// dominate all the possible reads.
+    /// Only supports LoopValues for now.
+    BBPosList findLoadPos (const Value* value) const;
+
+    /// Finds the latest point where a yarn_store can occur that will be dominated
+    /// by all the possible writes.
+    /// Only supports LoopValues for now.
+    /// \todo Could also do LoopPointer if we know that they're aliases.
+    BBPosList findStorePos (const Value* value) const;
+
 
   };
 

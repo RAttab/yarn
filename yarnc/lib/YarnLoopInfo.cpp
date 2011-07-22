@@ -75,7 +75,8 @@ YarnLoop::YarnLoop(Loop* l,
 	 PostDominatorTree* pdt) 
 :
   LI(li), AA(aa), DT(dt), PDT(pdt),
-  L(l), Dependencies(), Pointers(), Invariants()
+  L(l), Dependencies(), Pointers(), Invariants(),
+  PtrInstrPoints(), ValueInstrPoints()
 {
   processLoop();
 }
@@ -138,6 +139,10 @@ void YarnLoop::processLoop () {
     assert(exitBlocks.size() > 1 && 
 	   "Simplify Loop should ensure only a single exit blocks.");
   }
+
+  processValuePoints();
+  processPtrPoints();
+
 }
 
 // The SimplifyLoop pass ensures that we have only one back-edge in the loop and only
@@ -289,6 +294,7 @@ void YarnLoop::processPointers (PointerInstSet& LoadSet, PointerInstSet& StoreSe
 }
 
 
+
 // An invariant means that 
 void YarnLoop::processInvariants (Instruction* Inst) {
 
@@ -343,14 +349,14 @@ BBPosList YarnLoop::findLoadPos (const Value* Value) const {
   // If the common dominator contains a load instruction, 
   //    return the pos right before it.
   // otherwise return the last position in the BB.
-  BBPos pos = loadBB->back();
+  BBPos pos = &(*loadBB->back());
   for (Value::const_use_iterator it = Value->begin(), endIt = Value->end();
        it != endIt; ++it)
   {
     BBInstPredicate pred(*it);
     BasicBlock::iterator findIt = std::find_if(loadBB->begin(), loadBB->end(), pred);
     if (findIt != loadBB->end()) {
-      pos = findIt;
+      pos = &(*findIt);
       break;
     }
     
@@ -424,15 +430,14 @@ BBPosList YarnLoop::findStorePos (const Value* Value) const {
   // If the common dominator contains a load instruction, 
   //    return the pos right after it.
   // otherwise return the first valid position in the BB.
-  BBPos pos = storeBB->getFristNonPHI();
+  BBPos pos = &(*storeBB->getFristNonPHI());
   for (InstructionList::iterator it = storeList.begin(), endIt = storeList.end();
        it != endIt; ++it)
   {
     BBInstPredicate pred(*it);
     BasicBlock::iterator findIt = std::find_if(storeBB->begin(), storeBB->end(), pred);
     if (findIt != storeBB->end()) {
-      pos = findIt;
-      pos++;
+      pos = &(*findIt);
       break;
     }
     
@@ -443,6 +448,136 @@ BBPosList YarnLoop::findStorePos (const Value* Value) const {
   return posList;
 
 }
+
+
+// Ugliest for loops EVAR...
+void YarnLoop::processPtrPoints () {
+  using LoopPointer::AliasList;
+
+  for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end();
+       it != itEnd; ++it)
+  {
+
+    const AliasList& aliasList = (*it)->getAliasList();
+    for (AliasList::const_iterator aliasIt = aliasList.begin(), 
+	   aliasEndIt = aliasList.end();
+	 aliasIt != aliasEndIt; ++aliasIt)
+    {
+
+      Value* alias = *aliasIt;
+      for (Value::const_use_iterator useIt =  alias->use_begin(), 
+	     useEndIt = alias->use_end();
+	   useIt != useEndIt; ++useIt)
+      {
+	User* user = *useIt;
+	PointerInsertPoint* pip = NULL;
+
+	if (StoreInst* si = dyn_cast<StoreInst>(user)) {
+	  pip = new PointerInsertPoint(InstrStore, si);
+	}
+	else if (LoadInst* li = dyn_cast<LoadInst>(user)) {
+	  pip = new PointerInsertPoint(InstrLoad, li);
+	}
+	else {
+	  continue;
+	}
+	
+	PtrInstrPoints->push_back(pip);
+
+      } // use iteration
+    } // alias iteration
+  } // pointer interation
+
+}
+
+void YarnLoop::processValuePoints () {
+
+  for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
+       it != itEnd; ++it)
+  {
+    // Process the loads.
+    {
+      Value* loadVal = (*it)->getEntryValue();
+      BBPosList posList = findLoadPos(loadVal);
+      assert(posList.size() == 1 &&
+	     "We don't yet support multiple load points"
+	     " and there should be at least one load point.");
+
+      for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
+	   posIt != posEndIt; ++posIt)
+      {
+	ValueInsertPoint* vip = new ValueInsertPoint(InstrLoad, loadVal, *posIt);
+	ValueInstrPoint.push_back(vip);
+      }
+    }
+
+    // Process the stores.
+    {
+      Value* writeVal = (*it)->getExitValue();
+      BBPosList posList = findWritePos(writeVal);
+      assert(posList.size() > 0 &&
+	     "There should be at least one store point.");
+
+      for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
+	   posIt != posEndIt; ++posIt)
+      {
+	ValueInsertPoint* vip = new ValueInsertPoint(InstrWrite, writeVal, *posIt);
+	ValueInstrPoint.push_back(vip);
+      }
+    }
+
+  }
+}
+
+
+// Some of the added values are redundent but we prefer to err on the side of caution.
+void YarnLoop::fillValueMap (llvm::ValueMap& VMap) const {
+  using LoopPointer::AliasList;
+
+  for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
+       it != itEnd; ++it)
+  {
+    VMap[(*it)->getHeaderNode()] = NULL;
+    VMap[(*it)->getFooterNode()] = NULL;
+    VMap[(*it)->getEntryValue()] = NULL;
+    VMap[(*it)->getExitValue()] = NULL;
+  }  
+
+  for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end();
+       it != itEnd; ++it)
+  {
+    const AliasList& aliasList = (*it)->getAliasList();
+    for (AliasList::const_iterator aliasIt = aliasList.begin(), 
+	   aliasEndIt = aliasList.end();
+	 aliasIt != aliasEndIt; ++aliasIt)
+    {
+      VMap[*aliasIt] = NULL;
+    }
+  }
+
+  for (InvariantList::iterator it = Invariants.begin(), itEnd = Invariants.end();
+       it != itEnd; ++it)
+  {
+    VMap[*it] = NULL;
+  }
+
+  for (PtrInstrPoints::iterator it = Invariants.begin(), itEnd = Invariants.end();
+       it != itEnd; ++it)
+  {
+    VMap[(*it)->getInstruction()] = NULL;
+  }
+
+  for (ValueInstrPoints::iterator it = Invariants.begin(), itEnd = Invariants.end();
+       it != itEnd; ++it)
+  {
+    VMap[(*it)->getValue()] = NULL;
+    VMap[(*it)->getPosition()] = NULL;
+  }
+
+}
+    
+
+
 
 void YarnLoop::print (raw_ostream &OS) const {
 
