@@ -41,24 +41,31 @@ namespace {
 
     Module* M;
 
-    typedef std::map<YarnLoop*, Type*> LoopTypeMap;
-    LoopTypeMap StructTypeMap;
+    typedef std::map<YarnLoop*, ArrayType*> LoopTypeMap;
+    LoopTypeMap LoopTypes;
 
     bool DeclarationsInserted;
 
-    Type* YarnWord;
-    Type* YarnExecSimpleFct;
-    Type* YarnDepLoadFct;
-    Type* YarnDepStoreFct;
+    IntegerType* YarnWordTy;
+    PointerType* VoidPtrTy
+
+    Function* YarnExecutorFct;
+    Function* YarnExecSimpleFct;
+    Function* YarnDepLoadFct;
+    Function* YarnDepLoadFastFct;
+    Function* YarnDepStoreFct;
+    Function* YarnDepStoreFastFct;
 
     unsigned ValCounter;
 
   public :
     
     InstrumentModuleUtil (Module* m) : 
-      M(m), StructTypeMap(), DeclarationsInserted(false),
-      YarnWordType(NULL), YarnExecSimpleFct(NULL), 
-      YarnDepLoadFct(NULL), YarnDepStoreFct(NULL),
+      M(m), LoopTypes(), DeclarationsInserted(false),
+      YarnWordTy(NULL), VoidPtrTy(NULL),
+      YarnExecutorFct(NULL), YarnExecSimpleFct(NULL),
+      YarnDepLoadFct(NULL), YarnDepLoadFastFct(NULL), 
+      YarnDepStoreFct(NULL), YarnDepStoreFastFct(NULL),
       ValCounter(0)
     {}
 
@@ -66,32 +73,40 @@ namespace {
     ~InstrumentModuleUtil () {}
 
 
-    void createDeclarations();
-
     inline Module* getModule () { return M; }
 
+    inline const IntegerType* getYarnWordType () const { 
+      return YarnWordTy; 
+    }
+    inline const PointerType* getVoidPtrType () const {
+      return VoidPtrTy;
+    }
+    inline const Function* getYarnExecSimpleFct () const { 
+      return YarnExecSimpleFct; 
+    }
+    inline const Function* YarnDepLoadFct () const { 
+      return YarnDepLoadFct; 
+    }
+    inline const Function* YarnDepLoadFastFct () const { 
+      return YarnDepLoadFastFct; 
+    }
+    inline const Function* getYarnDepStoreFct () const { 
+      return YarnDepStoreFct; 
+    }
+    inline const Function* getYarnDepStoreFastFct () const { 
+      return YarnDepStoreFastFct; 
+    }
 
-    inline const Type* getYarnWord () const { return YarnWord; }
-    inline const Type* getYarnExecSimpleFct () const { return YarnExecSimpleFct; }
-    inline const Type* YarnDepLoadFct () const { return YarnDepLoadFct; }
-    inline const Type* getYarnDepStoreFct () const { return YarnDepStoreFct; }
+    std::string makeName(char prefix);    
+    void createDeclarations();
+    ArrayType* createLoopArrayType (YarnLoop* yl, unsigned valueCount);
 
-
-    Type* createStructType (YarnLoop* f, unsigned valueCount);
-
-    inline Type* getStructType (Function* f) const {
-      return StructTypeMap[f];
+    inline ArrayType* getLoopArrayType (YarnLoop* yl) const {
+      return LoopTypes[f];
     }
 
     void print (llvm::raw_ostream &O) const;
 
-    inline std::string makeName(char prefix) {
-      std::string str = "y";
-      str += prefix;
-      str += ++ValCounter;
-      return str;
-    }
-    
   };
 
 
@@ -158,6 +173,81 @@ namespace {
 }; // anynmous namespace
 
 
+//===----------------------------------------------------------------------===//
+/// InstrumentModuleUtil Impl
+void InstrumentModuleUtil::createDeclarations () {
+  if (DeclarationsInserted) {
+    return;
+  }
+
+  YarnWordTy = IntergerType::get(M->getContext(), YarnWordBitSize);
+  M->addTypeName("yarn_word_t", YarnWordTy);
+
+  VoidPtrTy = PointerType::getUnqual(Type::Int8Ty);
+  M->addTypeName("void_ptr_t", VoidPtrTy);
+
+  {
+    std::vector<Type*> args;
+    args.push_back(YarnWordTy); // yarn_word_t pool_id
+    args.push_back(VoidPtrTy);  // void* data
+    YarnExecutorFct = FunctionType::get(YarnWordTy, args); // enum yarn_ret
+    M->addTypeName("yarn_executor_t", YarnExecutorFct);
+  }
+
+  {
+    std::vector<Type*> args;
+    args.push_back(YarnExecutorFct); //yarn_executor_t executor
+    args.push_back(VoidPtrTy); // void* data
+    args.push_back(YarnWordTy); // thread_count
+    args.push_back(YarnWordTy); // ws_size
+    args.push_back(YarnWordTy); // index_size
+    FunctionType* t = FunctionType::get(Type::Int1Ty, args); 
+
+    YarnExecSimpleFct = M->getOrInsertFunction("yarn_exec_simple", t);
+  }
+
+  {
+    std::vector<Type*> args;
+    args.push_back(YarnWordTy); // yarn_word_t pool_id
+    args.push_back(VoidPtrTy); // const void* src
+    args.push_back(VoidPtrTy); // const void* dest
+    FunctionType* t = FunctionType::get(Type::Int1ty, args);
+
+    YarnDepLoadFct = M->getOrInsertFunction("yarn_dep_load", t);
+    YarnDepStoreFct = M->getOrInsertFunction("yarn_dep_store", t);
+  }
+
+  {
+    std::vector<Type*> args;
+    args.push_back(YarnWordTy); // yarn_word_t pool_id
+    args.push_back(YarnWordTy); // yarn_word_t index_id
+    args.push_back(VoidPtrTy); // const void* src
+    args.push_back(VoidPtrTy); // const void* dest
+    FunctionType* t = FunctionType::get(Type::Int1ty, args);
+
+    YarnDepLoadFastFct = M->getOrInsertFunction("yarn_dep_load_fast", t);
+    YarnDepStoreFastFct = M->getOrInsertFunction("yarn_dep_store_fast", t);
+  }
+
+  DeclaratrionsInserted = true;
+}
+
+ArrayType* InstrumentModuleUtil::createLoopArrayType (YarnLoop* yl, unsigned valueCount) {
+  ArrayType* t = ArrayType::get(YarnWordTy, valueCount);
+  M->addTypeName(makeName('t'));
+  LoopTypes[yl] = t;
+  return t;
+}
+
+std::string InstrumentModuleUtil::makeName(char prefix); {
+  std::string str = "y";
+  str += prefix;
+  str += ++ValCounter;
+  return str;
+}
+
+
+
 
 
 //===----------------------------------------------------------------------===//
@@ -165,13 +255,8 @@ namespace {
 
 
 void InstrumentLoopUtil::instrumentLoop() {
-
   // Add the struct type required to store the deps and invariants.
-  unsigned valueCount = 0;
-  valueCount += YL->getDependencies().size();
-  valueCount += YL->getPointers().size(); // \todo WRONG!!! Need to filter out stuff.
-  valueCount += YL->getInvariants().size();
-  Type* structType = imu->createStructType(YL, valueCount);
+  imu->createStructType(YL, YL->getEntryValues().size());
 
   CodeInfo codeInfo;
   TmpFct = CloneFunction(SrcFct, TmpVMap, false, &codeInfo);
@@ -202,6 +287,8 @@ void InstrumentLoopUtil::createTmpHeader () {
   // foreach ptrDep & invariant
   // %i = getelementptr i8* i
   // %ypi = load %i
+
+  // %yb1 = alloca YarnWord
 
   // Probably should keep a map of the pointers.
 }

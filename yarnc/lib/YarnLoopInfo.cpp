@@ -76,7 +76,7 @@ YarnLoop::YarnLoop(Loop* l,
 :
   LI(li), AA(aa), DT(dt), PDT(pdt),
   L(l), Dependencies(), Pointers(), Invariants(),
-  PtrInstrPoints(), ValueInstrPoints()
+  PtrInstrPoints(), ValueInstrPoints(), EntryValues()
 {
   processLoop();
 }
@@ -142,6 +142,8 @@ void YarnLoop::processLoop () {
 
   processValuePoints();
   processPtrPoints();
+
+  processEntryValues();
 
 }
 
@@ -306,6 +308,39 @@ void YarnLoop::processInvariants (Instruction* Inst) {
   }
 
 }
+
+
+void YarnLoop::processEntryValues () {
+  for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
+       it != itEnd; ++it)
+  {
+    EntryValues.push_back(std::make_pair((*it)->getEntryValue(), false));
+  }
+
+  for (PointerList::iterator it = Pointers.begin(), itEnd = Points.end(); 
+       it != itEnd; ++it)
+  {
+    using LoopPointer::AliasList;
+    const AliasList& aliases = (*it)->getAliasList();
+
+    for (AliasList::iterator aliasIt = aliases.begin(), aliasEndIt = aliases.end();
+	 aliasIt != aliasEndIt; ++aliasIt)
+    {
+      Value* alias = *it;
+      if (L->contains(alias->getParent())) {
+	EntryValues.push_back(std::make_pair(alias, true));
+      }
+    }
+  }
+
+  for (InvariantList::iterator it = Invariants.begin(), itEnd = Invariants.end();
+       it != itEnd; ++it) 
+  {
+    EntryValues.push_back(std::make_pair(*it, true));
+  }
+  
+}
+
 
 
 namespace {

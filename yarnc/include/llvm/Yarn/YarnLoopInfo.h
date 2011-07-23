@@ -186,6 +186,11 @@ namespace yarn {
     typedef std::vector<PointerInsertPoint*> PtrInsertList;
     typedef std::vector<ValueInsertPoint*> ValueInsertList;
 
+    // A true value indicates that it should be loaded right-away.
+    // while false indicates that it should be loaded as needed with yarn_load/store.
+    typedef std::pair<Value*, bool> EntryValueTuple;
+    typedef std::vector<EntryValueTuple> EntryValueList;
+
     typedef llvm::Instruction* BBPos;
     typedef std::vector<BBPos> BBPosList;
 
@@ -208,8 +213,12 @@ namespace yarn {
     /// May be a pointer or a regular value.
     InvariantList Invariants;
 
+    /// List locations where isntrumentation should be added.
     PtrInsertList PtrInstrPoints;
     ValueInsertList ValueInstrPoints;
+
+    /// List of all the values that need to be passed to the speculative function.
+    EntryValueList EntryValues;
 
   public:
     
@@ -240,6 +249,10 @@ namespace yarn {
     /// Instrumentation points for the value dependencies.
     inline const ValueInstrList& getValueInstrPoints () const { return ValueInstrPoints; }
 
+    /// List of all the values that need to be passed to the speculative function.
+    /// If the tuple contains a true value then it should be loaded in the header.
+    inline const EntryValues& getEntryValues () const { return EntreyValues; }
+
     
     /// Debug.  
     void print (llvm::raw_ostream &OS) const;
@@ -266,6 +279,8 @@ namespace yarn {
     void processPtrPoints ();
     /// Finds the instrumentation points for all the value dependencies.
     void processValuePoints ();
+
+    void processEntryValues ();
 
     /// Finds the earliest point where a yarn_load can occur that will 
     /// dominate all the possible reads.
