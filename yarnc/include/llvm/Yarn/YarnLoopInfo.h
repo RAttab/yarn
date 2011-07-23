@@ -240,10 +240,6 @@ namespace yarn {
     /// Instrumentation points for the value dependencies.
     inline const ValueInstrList& getValueInstrPoints () const { return ValueInstrPoints; }
 
-    /// Fills a ValueMap with all the values that were discovered by this pass.
-    /// This allows us to keep our analysis after we copy the target loop.
-    void fillValueMap (llvm::ValueMap& VMap) const;
-    
     
     /// Debug.  
     void print (llvm::raw_ostream &OS) const;
@@ -289,7 +285,7 @@ namespace yarn {
 //===----------------------------------------------------------------------===//
 /// Function pass that finds and analyzes loops that needs to be instrumented.
   class YarnLoopInfo : public llvm::FunctionPass, public Noncopyable {
-  public :
+  public:
 
     typedef std::vector<YarnLoop*> LoopList;
     typedef Loops::iterator iterator;

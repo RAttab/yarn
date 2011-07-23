@@ -12,7 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "yarn-loopinfo"
-#include "llvm/Yarn/YarnLoopInfo.h"
+#include <llvm/Yarn/YarnLoopInfo.h>
 #include <llvm/Value.h>
 #include <llvm/User.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -470,6 +470,11 @@ void YarnLoop::processPtrPoints () {
 	   useIt != useEndIt; ++useIt)
       {
 	User* user = *useIt;
+	// Make sure we're still in the loop.
+	if (!L->contains(user->getParent())) {
+	  continue;
+	}
+
 	PointerInsertPoint* pip = NULL;
 
 	if (StoreInst* si = dyn_cast<StoreInst>(user)) {
@@ -527,56 +532,7 @@ void YarnLoop::processValuePoints () {
     }
 
   }
-}
-
-
-// Some of the added values are redundent but we prefer to err on the side of caution.
-void YarnLoop::fillValueMap (llvm::ValueMap& VMap) const {
-  using LoopPointer::AliasList;
-
-  for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
-       it != itEnd; ++it)
-  {
-    VMap[(*it)->getHeaderNode()] = NULL;
-    VMap[(*it)->getFooterNode()] = NULL;
-    VMap[(*it)->getEntryValue()] = NULL;
-    VMap[(*it)->getExitValue()] = NULL;
-  }  
-
-  for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end();
-       it != itEnd; ++it)
-  {
-    const AliasList& aliasList = (*it)->getAliasList();
-    for (AliasList::const_iterator aliasIt = aliasList.begin(), 
-	   aliasEndIt = aliasList.end();
-	 aliasIt != aliasEndIt; ++aliasIt)
-    {
-      VMap[*aliasIt] = NULL;
-    }
-  }
-
-  for (InvariantList::iterator it = Invariants.begin(), itEnd = Invariants.end();
-       it != itEnd; ++it)
-  {
-    VMap[*it] = NULL;
-  }
-
-  for (PtrInstrPoints::iterator it = Invariants.begin(), itEnd = Invariants.end();
-       it != itEnd; ++it)
-  {
-    VMap[(*it)->getInstruction()] = NULL;
-  }
-
-  for (ValueInstrPoints::iterator it = Invariants.begin(), itEnd = Invariants.end();
-       it != itEnd; ++it)
-  {
-    VMap[(*it)->getValue()] = NULL;
-    VMap[(*it)->getPosition()] = NULL;
-  }
-
-}
-    
-
+}    
 
 
 void YarnLoop::print (raw_ostream &OS) const {
@@ -584,14 +540,12 @@ void YarnLoop::print (raw_ostream &OS) const {
 }
 
 
-//===----------------------------------------------------------------------===//
-/// LoopDepVisitor
-
-
-
 
 //===----------------------------------------------------------------------===//
 /// YarnLoopInfo
+
+char YarnLoopInfo::ID = 0;
+
 
 void YarnLoopInfo::getAnalysisUsage (AnalysisUsage &AU) const {
   AU.setPreservesAll();
@@ -634,6 +588,7 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
     }      
   }
 
+  return false;
 }
 
 
@@ -659,11 +614,10 @@ bool YarnLoopInfo::checkLoop (Loop* L) {
 /// Heuristic to determine whether it's worth instrumenting the loop.    
 /// \todo Could implement a way better heuristic
 ///       - Check for inner loops.
-///       - Cound the number of load and stores (number of deps is inacurate for ptrs).
 bool YarnLoopInfo::keepLoop (YarnLoop* YL) {
   int depCount = 0;
-  depCount += YL->getDependencies();
-  depCount += YL->getPointers();
+  depCount += YL->getPtrInstrPoints().size();
+  depCount += YL->getValueInstrPoints().size();
 
   int loopSize = 0;
   Loop* l = YL->getLoop();
@@ -693,7 +647,9 @@ void YarnLoopInfo::print (raw_ostream &O, const Module *M) const {
 
 
 
-char Yarnc::ID = 0;
-INITIALIZE_PASS(Yarnc, "yarn-loopinfo",
+//===----------------------------------------------------------------------===//
+/// Pass Registration
+
+INITIALIZE_PASS(YarnLoopInfo, "yarn-loopinfo",
                 "Yarn loop analysis.",
-                false, false);
+                true, true);

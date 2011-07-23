@@ -32,13 +32,10 @@ fct_header:
   %yarn.s1 = bitcast task %yarn.t1
   %yarn.p1 = getelementptr %yarn.s1 0 0
   %yarn.p2 = getelementptr %yarn.s1 0 1
-  %yarn.v1 = load %yarn.p1
-  %yarn.v2 = load %yarn.p2
+  %yarn.b = alloca i32
   
 %loopbegin:
   ; paste loop here.
-  ; replace %1 by %yarn.v1
-  ; replace %2 by %yarn.v2
   ; remove phi nodes.
   ; replace back-edge by returns with continue const.
   ; replace forward-edges by %loopend

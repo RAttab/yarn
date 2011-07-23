@@ -21,12 +21,25 @@ namespapce yarn {
   
 //===----------------------------------------------------------------------===//
 /// These type are used to declare the libyarn interface.
+/// \todo Should be aggregated into a common header or libyarn and yarnc.
 ///
   typedef uint_fast32_t YarnWord;
   enum {
     YarnWordBitSize = (sizeof(YarnWord)*8);
     YarnWord64 = YarnWordBitSize == 64;
   };
+
+
+//===----------------------------------------------------------------------===//
+/// Return values declared in yarn.h for the instrumented function.
+/// \todo Should be aggregated into a common header or libyarn and yarnc.
+///
+  enum yarn_ret {
+    yarn_ret_continue = 0,
+    yarn_ret_break = 1,
+    yarn_ret_error = 2
+  };
+
 
 
 

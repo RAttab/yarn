@@ -10,9 +10,9 @@
 #include "yarn/dependency.h"
 
 enum yarn_ret {
-  yarn_ret_continue,
-  yarn_ret_break,
-  yarn_ret_error
+  yarn_ret_continue = 0,
+  yarn_ret_break = 1,
+  yarn_ret_error = 2
 };
 
 typedef enum yarn_ret (*yarn_executor_t) (const yarn_word_t pool_id, void* data);
