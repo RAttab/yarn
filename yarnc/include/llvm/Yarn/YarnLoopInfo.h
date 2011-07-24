@@ -250,6 +250,9 @@ namespace yarn {
 
     /// List of all the values that need to be instrumented.
     inline const ValueList& getDependencies () const { return Dependencies; }
+
+    /// Returns the LoopValue for a given entry or exit value.
+    inline LoopValue* getDependencyForValue (Value*);
     
     /// List of all the pointers that need to be instrumented.
     inline const PointerList& getPointers () const { return Pointers; }

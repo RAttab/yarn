@@ -25,8 +25,10 @@
 #include <llvm/Value.h>
 #include <llvm/User.h>
 #include <llvm/Instruction.h>
+#include <llvm/GlobalValue.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/BasicBlockUtils.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/ADT/Statistic.h>
 #include <algorithm>
 using namespace llvm;
@@ -49,6 +51,7 @@ namespace {
     bool DeclarationsInserted;
 
     IntegerType* YarnWordTy;
+    IntegerType* EnumTy;
     PointerType* VoidPtrTy
 
     Function* YarnExecutorFct;
@@ -64,7 +67,7 @@ namespace {
     
     InstrumentModuleUtil (Module* m) : 
       M(m), LoopTypes(), DeclarationsInserted(false),
-      YarnWordTy(NULL), VoidPtrTy(NULL),
+      YarnWordTy(NULL), EnumTy(NULL), VoidPtrTy(NULL),
       YarnExecutorFct(NULL), YarnExecSimpleFct(NULL),
       YarnDepLoadFct(NULL), YarnDepLoadFastFct(NULL), 
       YarnDepStoreFct(NULL), YarnDepStoreFastFct(NULL),
@@ -81,6 +84,9 @@ namespace {
 
     inline const IntegerType* getYarnWordType () const { 
       return YarnWordTy; 
+    }
+    inline const IntegerType* getEnumTy() const {
+      return EnumTy;
     }
     inline const PointerType* getVoidPtrType () const {
       return VoidPtrTy;
@@ -143,8 +149,8 @@ namespace {
 
   private:
 
-    void instrumentTmpHeader();
-    void instrumentTmpBody();
+    void createTmpFct();
+    void instrumentTmpBody(std::map<Value*, Value*>&);
     void cleanupTmp();    
 
     void createNewFct();
@@ -186,6 +192,9 @@ void InstrumentModuleUtil::createDeclarations () {
 
   YarnWordTy = IntergerType::get(M->getContext(), YarnWordBitSize);
   M->addTypeName("yarn_word_t", YarnWordTy);
+
+  EnumTy = IntegerType::get(M->getContext(), Type::Int32Ty);
+  M->addTypeName("enum_t", EnumTy);
 
   VoidPtrTy = PointerType::getUnqual(Type::Int8Ty);
   M->addTypeName("void_ptr_t", VoidPtrTy);
@@ -262,9 +271,12 @@ void InstrumentLoopUtil::instrumentLoop() {
   // Add the struct type required to store the deps and invariants.
   imu->createStructType(YL, YL->getEntryValues().size());
 
+  // Create the speculative function and instrument it.
   cleanupTmpFct();
   createNewFct();
 
+  // Add the call to the speculative function.
+  // These will trash our analysis data. Do them last.
   instrumentSrcFooter();
   instrumentSrcHeader();
 
@@ -279,20 +291,16 @@ void InstrumentLoopUtil::createTmpFct () {
   // This will eventually be the first BB in the fct.
   BasicBlock* loopHeader = TmpVMap[YL->getLoop()->getHeader()];
   BasicBlock* bbHeader = 
-    BasicBlock::Create(IMU->getContext(), IMU->makeName('h'), TmpFct, loopHeader);
+    BasicBlock::Create(IMU->getContext(), IMU->makeName('b'), TmpFct, loopHeader);
 
-
-  //
-  // Setup the header.
-  //
 
   // Create placeholder value for the pool_id and the *task arguments
   Value* poolIdVal = 
     new BitCastInst (ConstantInt::get(IMU->getYarnWordType(), 0),
-		     IMU->makeName('p'), bbHeader);
+		     IMU->makeName('z'), bbHeader);
   Value* taskPtr = 
     new BitCastInst (ConstantInt::get(IMU->getVoidPtrType(), 0),
-		     IMU->makeName('p'), bbHeader);
+		     IMU->makeName('z'), bbHeader);
   
   // struct task* s = (struct task*) task;
   Value* loopArrayPtr =
@@ -311,7 +319,6 @@ void InstrumentLoopUtil::createTmpFct () {
 
     Value* val = TmpVMap[entryValues[i].first];
     bool loadNow = entryValues[i].second;
-    std::string name = IMU->makeName('p');
 
     std::vector<const Value*> indexes;
     indexes.push_back(ConstantInt::get(Type::Int32Ty, 0));
@@ -346,10 +353,14 @@ void InstrumentLoopUtil::createTmpFct () {
   BranchInst::Create(TmpVMap[YL->getLoop()->getHeader()], bbHeader);
 
 
-  //
-  // Instrument the Body.
-  // \todo We should process the return value of the yarn_dep_xxx calls.
-  //
+  // Do the rest of the instrumentation.
+  instrumentTmpBody(headerValMap);
+  cleanupTmp(bbHeader);
+  
+}
+
+
+void InstrumentLoopUtil::instrumentTmpBody (std::map<Value*, Value*>& headerValMap) {
 
   // Process the value accesses.
   using YarnLoop::ValueInsertList;  
@@ -499,51 +510,206 @@ void InstrumentLoopUtil::createTmpFct () {
     }    
   }
 }
-void InstrumentLoopUtil::cleanupTmp() {
+void InstrumentLoopUtil::cleanupTmp(BasicBlock* headerBB) {  
+
+  Loop* l = YL->getLoop();
+
+  // replace all forward out-of-loop edges by a ret break
+  for (Loop::block_iterator it = l->block_begin(), itEnd = l->block_end();
+       it != itEnd; ++it)
+  {
+    if (!l->isLoopExiting(*it)) {
+      continue;
+    }
+
+    BasicBlock* exitingBB = TmpVMap[*it];
+    
+    // Remove the old terminator.
+    exitingBB->getTerminator()->eraseFromParent();
+    
+    // Create a return inst that breaks out of the loop.
+    ReturnInst::Create(IMU->getContext(), 
+		       ConstantInt::get(IMU->getEnumType(), yarn_ret_break),
+		       exitingBB);
+  }
 
   // replace the backedge by a ret continue.
-  // replace all forward out-of-loop edges by a ret break
+  {
+    BasicBlock* latch = TmpVMap[l->getLoopLatch()];
+    assert(latch && "SimplifyLoop should ensure that we have a latch BB.");
+    
+    // Remove the old terminator.
+    latch->getTerminator()->eraseFromParent();
+
+    // Create a return inst that continues with the next iteration.
+    ReturnInst::Create(IMU->getContext(), 
+		       ConstantInt::get(IMU->getEnumType(), yarn_ret_continue),
+		       exitingBB);
+    
+  }  
 
   // remove any pred BBs
-  // remove any succ BBs
+  BasicBlock* bb = NULL;
+  while (headerBB != (bb = &TmpFunction->front())) {
+    bb->eraseFromParent();
+  }
 
+  // remove any succ BBs
+  assert(YL->getLoop()->getExitingBlocks().size() == 1, "SimplifyLoop again...");
+  BasicBlock* exitBlock = TmpVMap[YL->getLoop()->getExitingBlock()];
+  bb = NULL;
+  while (exitBlock != (bb = &TmpFunction->back())) {
+    bb->eraseFromParent();
+  }
+  exitBlock->eraseFromParent();
 }
 
 
 void InstrumentLoopUtil::createNewFct() {
-  // Create the function
+
+  // Create the final speculative function
+  NewFct = Function::Create(IMU->getYarnExecutorFct(), 
+			    GlobalValue::InternalLinkage,
+			    IMU->makeName('f'), IMU->getModule());
+
+  // Setup the VMap so that we delete all the old arguments.
+  for (Function::arg_iterator it = TmpFct->arg_begin(), itEnd = TmpFct->arg_end();
+       it != itEnd; ++it)
+  {    
+    NewVMap[*it] = NULL;
+  }
+
   // Clone tmp into the new function
+  SmallVectorImpl<ReturnInst*> retList;
+  CloneFunctionInto(NewFct, TmpFct, NewVMap, false, retList);
+
   // replace the placeholders by the arguments.
+  Function::arg_iterator argIt = NewFct->arg_begin();
+  BasicBlock::iterator bbIt = NewFct->front()->begin();
+
+  // Replace the pool_id argument with it's placeholder.
+  Argument* argPoolId = *argIt;
+  Value* tmpPoolId = *bbIt;
+  ReplaceInstWithValue(NewFct->front().getInstList(), bbIt, argPoolId);
+
+  argIt++;
+  bbIt++;
+
+  // Replace the task  argument with it's placeholder.
+  Argument* argTaskPtr = *argIt;
+  Value* tmpTaskPtr = *bbIt;
+  ReplaceInstWithValue(NewFct->front().getInstList(), bbIt, argTaskPtr);
+
+  // Remove the placeholders
+  tmpPoolId->eraseFromParent();
+  tmpTaskPtr->eraseFromParent();
 }
 
 
 void InstrumentLoopUtil::instrumentSrcHeader() {
   // create new header BB = %yh1
-  // %ys1 = alloca %yt1
+  BasicBlock* loopHeader = YL->getLoop()->getHeader();
+  BasicBlock* loopExit = YL->getLoop()->getExitBlock();
+  BasicBlock* oldPred = YL->getLoop()->getLoopPredecessor();
 
-  // foreach values in the struct
-  //  %ypi = getelementptr %ys1 i
-  //  store %1 %ypi
+  BasicBlock* instrHeader = 
+    BasicBlock::Create(IMU->getContext(), IMU->makeName('b'), NewFct, loopHeader);
 
-  // %yr1 = call yarn_exec_simple(%ys1, %yf1)
+  // Create a new array for all the value used by the speculative sys.
+  Value* arrayPtr = 
+    new AllocaInst(IMU->getLoopArrayType(YL), 0, IMU->makeName('s'), instrHeader);
 
-  // foreach values in the struct
-  //  %yvi = load %ypi
-  //  => replace %i users by %yvi
+  // Store the current values of the dep and invariants into the local strucutre.
+  using YarnLoop::EntryValueList;
+  std::vector< std::pair<Value*, Value*> > valuePtrList;
+  for (unsigned i = 0; i < YL->getEntryValues().size(); ++i) {
+    Value* val = entryValues[i].first;
+    bool isInvariant = entryValues[i].second;
 
-  // %yc1 = cmp %yr1 == error
-  // br %yc1 %loop, yfooter  
+    std::vector<const Value*> indexes;
+    indexes.push_back(ConstantInt::get(Type::Int32Ty, 0));
+    indexes.push_back(ConstantInt::get(Type::Int32Ty, i));
 
-}
-void InstrumentLoopUtil::instrumentSrcFooter() {
-  // create new footer BB => %yf1
+    // Get the pointer to the array index.
+    Value* ptr =
+      GetElementPtrInst::Create(arrayPtr,
+				indexes.begin(), indexes.end(),
+				IMU->makeName('p'), instrHeader);
 
-  // for each value in the struct
-  // %yn1 = phi %yh1 %yv1, %latch %i (exitValue)
-  // => replace %i by %yn1
+    // Store the current value into the structure.
+    new StoreInst(val, ptr, IMU->makeName('s'), instrHeader);
+
+    if (!isInvariant) {
+      valuePtrList.push_back(std::make_pair(val, ptr));
+    }
+  }
+
+  // call yarn_exec_simple
+  std::vector<Value*> args;
+  args.push_back(TmpFct); // executor
+  args.push_back(arrayPtr); // ddata
+  args.push_back(ConstantInt(IMU->getYarnWordType(), 0)); // threadCount - default value.
+  args.push_back(ConstantInt(IMU->getYarnWordType(), 0)); // ws_size - default value.
+  // index_size;
+  args.push_back(ConstantInt(IMU->getYarnWordType(), YL->getValueInstrPoints().size()));
+  Value* retVal = 
+    CallInst::Create(IMU->getYarnExecSimpleFct(), args, 
+		     IMU->makeName('r'), instrHeader);
+
+  // Load the results of the call.
+  for (size_t i = 0; i < valuePtrList.size(); ++i) {
+    Value* oldVal = valuePtrList[i].first;
+    Value* ptr = valuePtrList[i].second;
+
+    // Load the calc results into a variable.
+    Value* newVal = new LoadInst(ptr, IMU->makeName('v'), instrHeader);
+
+    // Save it for when we do the footer.
+    valuePtrList[i].first = newVal;
     
-}
+    // lv might be false if we're dealing with exit only dep.
+    LoopValue* lv = YL->getDependencyForValue(oldVal);
+    if (lv) {
+      // Update the entry phi node so that it takes our newly loaded value.
+      PHINode* phi = lv->getHeaderNode();
+      phi->removeIncomingValue(oldPred, false);
+      phi->addIncoming(newVal, instrHeader);
+    }
+  }  
+  
+  // Check the return value of the speculative call.
+  Value* comp = 
+    new ICompInst(*instrHeader, ICMP_EQ, retVal, ConstantInt(Type::Int1Ty, 1));
 
+  // Goto to the end of the loop if we were successfull 
+  // otherwise execute the loop with our partially calculated values.
+  BranchInst::Create(loopHeader, loopExit, comp, instrHeader);
+
+  // Redirect loop pred to our header.
+  TerminatorInst* term = oldPred->getTerminator();
+  for(unsigned i = 0; i < term->getNumSuccessor(); i++) {
+    if (term->getSuccessor(i) == loopHeader) {
+      term->setSuccessor(i, instrHeader);
+    }
+  }
+
+  // Update the exit PHINode of the loop to take
+  for (size_t i = 0; i < valuePtrList.size(); ++i) {
+    Value* oldVal = valuePtrList[i].first;
+    Value* ptr = valuePtrList[i].second;
+    
+    // lv might be null if we're dealing with entry only deps.
+    LoopValue* lv = YL->getDependencyForValue(oldVal);
+    if (lv) {
+
+      // If we come straight from the header then take the value specified there.
+      PHINode* phi = lv->getExitValue();
+      phi->addIncomingValue(oldVal, instrHeader);
+
+    }
+  }  
+
+}
 
 
 

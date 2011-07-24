@@ -87,6 +87,20 @@ YarnLoop::~YarnLoop() {
 }
 
 
+LoopValue* YarnLoop::getDependencyForValue (Value* val) {
+  for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
+       it != itEnd; ++it)
+  {
+    LoopValue* lv = *it;
+    if (lv->getEntryValue() == val || lv->getExitValue == val) {
+      return lv;
+    }
+  }
+
+  return NULL;
+}
+
+
 void YarnLoop::processLoop () {
 
   ValueMap exitingValueMap;
@@ -632,6 +646,9 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
 /// ignore any loop with non-trivial function calls.
 /// \todo We could easily support functions that only modify it's arguments.
 bool YarnLoopInfo::checkLoop (Loop* L) {
+  assert(L->isLoopSimplifyForm());
+  assert(L->getNumBackEdges() == 1);
+
   for (Loop::iterator bb = L->block_begin(), bbEnd = L->block_end(); bb != bbEnd; ++bb) {
     for (BasicBlock::iterator i = (*bb)->begin(), iEnd = (*bb)->end(); i != iEnd; ++i) {
 
