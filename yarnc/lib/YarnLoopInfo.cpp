@@ -384,21 +384,19 @@ BBPosList YarnLoop::findLoadPos (const Value* Value) const {
   // If the common dominator contains a load instruction, 
   //    return the pos right before it.
   // otherwise return the last position in the BB.
-  BBPos pos = &(*loadBB->back());
+  BBPosList posList;
   for (Value::const_use_iterator it = Value->begin(), endIt = Value->end();
        it != endIt; ++it)
   {
     BBInstPredicate pred(*it);
     BasicBlock::iterator findIt = std::find_if(loadBB->begin(), loadBB->end(), pred);
     if (findIt != loadBB->end()) {
-      pos = &(*findIt);
-      break;
+      posList.push_back(&(*findIt));
+      return posList;
     }
-    
   }  
 
-  BBPosList posList;
-  posList.push_back(pos);
+  posList.push_back(loadBB);
   return posList;
 }
 
@@ -465,21 +463,20 @@ BBPosList YarnLoop::findStorePos (const Value* Value) const {
   // If the common dominator contains a load instruction, 
   //    return the pos right after it.
   // otherwise return the first valid position in the BB.
-  BBPos pos = &(*storeBB->getFristNonPHI());
+  BBPosList posList;
   for (InstructionList::iterator it = storeList.begin(), endIt = storeList.end();
        it != endIt; ++it)
   {
     BBInstPredicate pred(*it);
     BasicBlock::iterator findIt = std::find_if(storeBB->begin(), storeBB->end(), pred);
     if (findIt != storeBB->end()) {
-      pos = &(*findIt);
-      break;
+      posList.push_back(&(*findIt));
+      return posList;
     }
     
   }  
 
-  BBPosList posList;
-  posList.push_back(pos);
+  posList.push_back(storeBB);
   return posList;
 
 }
@@ -532,6 +529,8 @@ void YarnLoop::processPtrPoints () {
 
 void YarnLoop::processValuePoints () {
 
+  unsigned index = 0;
+
   for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
        it != itEnd; ++it)
   {
@@ -546,7 +545,7 @@ void YarnLoop::processValuePoints () {
       for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
 	   posIt != posEndIt; ++posIt)
       {
-	ValueInsertPoint* vip = new ValueInsertPoint(InstrLoad, loadVal, *posIt);
+	ValueInsertPoint* vip = new ValueInsertPoint(InstrLoad, loadVal, *posIt, index);
 	ValueInstrPoint.push_back(vip);
       }
     }
@@ -561,10 +560,12 @@ void YarnLoop::processValuePoints () {
       for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
 	   posIt != posEndIt; ++posIt)
       {
-	ValueInsertPoint* vip = new ValueInsertPoint(InstrWrite, writeVal, *posIt);
+	ValueInsertPoint* vip = new ValueInsertPoint(InstrWrite, writeVal, *posIt, index);
 	ValueInstrPoint.push_back(vip);
       }
     }
+
+    index++;
 
   }
 }    

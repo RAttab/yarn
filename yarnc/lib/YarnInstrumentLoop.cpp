@@ -24,7 +24,9 @@
 #include <llvm/BasicBlock.h>
 #include <llvm/Value.h>
 #include <llvm/User.h>
+#include <llvm/Instruction.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/BasicBlockUtils.h>
 #include <llvm/ADT/Statistic.h>
 #include <algorithm>
 using namespace llvm;
@@ -74,6 +76,8 @@ namespace {
 
 
     inline Module* getModule () { return M; }
+
+    inline LLVMContext& getContext() { return M->getContext(); }
 
     inline const IntegerType* getYarnWordType () const { 
       return YarnWordTy; 
@@ -258,13 +262,7 @@ void InstrumentLoopUtil::instrumentLoop() {
   // Add the struct type required to store the deps and invariants.
   imu->createStructType(YL, YL->getEntryValues().size());
 
-  CodeInfo codeInfo;
-  TmpFct = CloneFunction(SrcFct, TmpVMap, false, &codeInfo);
-
-  instrumentTmpHeader();
-  instrumentTmpBody();
-  cleanupTmp();
-
+  cleanupTmpFct();
   createNewFct();
 
   instrumentSrcFooter();
@@ -272,28 +270,189 @@ void InstrumentLoopUtil::instrumentLoop() {
 
 }
 
-void InstrumentLoopUtil::createTmpHeader () {
-  
-  BasicBlock* oldPredBB = TmpVMap[YL->getLoop()->getPredecessor()];
-  // oldPredBB will be trashed.
+void InstrumentLoopUtil::createTmpFct () {
+  // Clone the function that we will be working on.
+  CodeInfo codeInfo;
+  TmpFct = CloneFunction(SrcFct, TmpVMap, false, &codeInfo);
 
-  // Create a new BB 
+  // Create a new header BB before the loop. 
+  // This will eventually be the first BB in the fct.
+  BasicBlock* loopHeader = TmpVMap[YL->getLoop()->getHeader()];
+  BasicBlock* bbHeader = 
+    BasicBlock::Create(IMU->getContext(), IMU->makeName('h'), TmpFct, loopHeader);
+
+
+  //
+  // Setup the header.
+  //
+
   // Create placeholder value for the pool_id and the *task arguments
-  // %ys = bitcast getStructType() task
-
-  // foreach valueDep
-  // %yvi = getelementptr YarnWord i
+  Value* poolIdVal = 
+    new BitCastInst (ConstantInt::get(IMU->getYarnWordType(), 0),
+		     IMU->makeName('p'), bbHeader);
+  Value* taskPtr = 
+    new BitCastInst (ConstantInt::get(IMU->getVoidPtrType(), 0),
+		     IMU->makeName('p'), bbHeader);
   
-  // foreach ptrDep & invariant
-  // %i = getelementptr i8* i
-  // %ypi = load %i
+  // struct task* s = (struct task*) task;
+  Value* loopArrayPtr =
+    new BitCastInst (taskPtr, 
+		     PointerType::getUnqual(IMU->getLoopArrayTyp(YL)),
+		     IMU->makeName('s'), bbHeader);
 
-  // %yb1 = alloca YarnWord
+  // Keeps track of the ptr into the array for a given value.
+  std::map<Value*, Value*> headerValMap;
+  
+  // Extract the structure for use within the function.
+  using YarnLoop::EntryValueList;
+  const EntryValueList& entryValues = YL->getEntryValues();
 
-  // Probably should keep a map of the pointers.
-}
+  for (unsigned i = 0; i < entryValues.size(); ++i) {
 
-void InstrumentLoopUtil::instrumentTmpBody() {
+    Value* val = TmpVMap[entryValues[i].first];
+    bool loadNow = entryValues[i].second;
+    std::string name = IMU->makeName('p');
+
+    std::vector<const Value*> indexes;
+    indexes.push_back(ConstantInt::get(Type::Int32Ty, 0));
+    indexes.push_back(ConstantInt::get(Type::Int32Ty, i));
+
+    // Get the pointer to the array index.
+    Value* ptr =
+      GetElementPtrInst::Create(loopArrayPtr,
+				indexes.begin(), indexes.end(),
+				IMU->makeName('p'), bbHeader);
+    
+    if (loadNow) {
+      Value* invariant = 
+	new LoadInst(ptr, IMU->makeName('v'), bbHeader);
+
+      // The value is an invariant so replace the old val with the loaded val.
+      BasicBlock::iterator valIt = BasicBlock::iterator(val);
+      ReplaceInstWithValue(val->getParent()->getInstList(),
+			   valIt, invariant);
+    }
+    else {
+      // The pointer will be used during instrumentation so remember it.
+      headerValMap[val] = ptr;
+    }
+  }
+  
+  // Create a buffer that will be used to load and store the instrumented values.
+  Value* bufferVal = 
+    new AllocaInstr(IMU->getYarnWordType(), 0, IMU->makeName('b'), bbHeader);
+
+  // Add the terminator instruction.
+  BranchInst::Create(TmpVMap[YL->getLoop()->getHeader()], bbHeader);
+
+
+  //
+  // Instrument the Body.
+  // \todo We should process the return value of the yarn_dep_xxx calls.
+  //
+
+  // Process the value accesses.
+  using YarnLoop::ValueInsertList;  
+  const ValueInsertList& valueInstr = YI->getValueInstrPoints();
+  for (ValueInsertList::iterator it = valueInstr.begin(), itEnd = valueIntr.end();
+       it != itEnd; ++it)
+  {
+    ValueInsertPoint* valuePoint = *it;
+    
+    if (Type == InstrLoad) {
+      Value* oldVal = TmpVMap[valuePoint->getValue()];
+
+      // Create the arguments for the yarn_dep call.
+      std::vector<Value*> args;
+      args.push_back(poolIdVal);
+      args.push_back(ConstantInt::get(IMU->getYarnWordType, valuePoint->getIndex()));
+      args.push_back(headerValMap[oldVal]); // src
+      args.push_back(bufferVal); // dest
+
+      Value* retVal;
+      Instruction* newVal;
+
+      if (valuePoint->getInstPos()) {
+	Instruction* pos = TmpVMap[valuePoint->getInstPos()];
+
+	// Call yarn_dep_load to load the desired value into the buffer.
+	// Place before the target instruction.
+	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), args, 
+			 IMU->makeName('r'), pos);
+
+	// Load the buffer into a new value.
+	// Place before the target instruction.
+	newVal = new LoadInst(bufferVal, IMU->makeName('l'), pos);		
+      }
+
+      else {
+	BasicBlock* pos = TmpVMap[ValuePoint->getBBPos()];
+	assert (pos && "Either getInstPos or getBBPos should be non-null.");
+	
+	// Call yarn_dep_load to load the desired value into the buffer. 
+	//Append at the end of the BB.
+	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), args, 
+			 IMU->makeName('r'), pos);
+
+	// Load the buffer into a new value.
+	//Append at the end of the BB.
+	newVal = new LoadInst(bufferVal, IMU->makeName('l'), pos);	
+      }
+
+      // Replace the old value with the loaded value 
+      BasicBlock::iterator valIt = BasicBlock::iterator(oldVal);
+      ReplaceInstWithValue(oldVal->getParent()->getInstList(), valIt, newVal);
+
+    }
+
+    else if (Type == InstrStore) {
+      Value* oldVal = TmpVMap[valuePoint->getValue()];
+
+      // Create the arguments for the yarn_dep call.
+      std::vector<Value*> args;
+      args.push_back(poolIdVal);
+      args.push_back(ConstantInt::get(IMU->getYarnWordType, valuePoint->getIndex()));
+      args.push_back(bufferVal); // src
+      args.push_back(headerValMap[oldVal]); // dest
+
+      Value* retVal;
+
+      if (valuePoint->getInstPos()) {
+	Instruction* pos = TmpVMap[valuePoint->getInstPos()];
+	
+	// We Want to place the instructions after pos.
+	BasicBlock::iterator posIt = BasicBlock::iterator(pos);
+	posIt++;
+
+	// Call yarn to store the buffer into memory.
+	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), args,
+				  IMU->makeName('r'), *posIt);
+
+	// Write the value into the buffer and place this instruction before the call.
+	new StoreInst(oldVal, bufferVal, IMU->makeName('s'), retVal);
+	
+      }
+      else {
+	BasicBlock* pos = TmpVMap[ValuePoint->getBBPos()];
+	assert (pos && "Either getInstPos or getBBPos should be non-null.");
+
+	// Call yarn to store the buffer into memory.
+	// Place the call at the beginning of the BB.
+	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), args,
+				  IMU->makeName('r'), *pos->front());
+
+	// Write the value into the buffer and place this instruction before the call.
+	new StoreInst(oldVal, bufferVal, IMU->makeName('s'), retVal);	
+      }
+    }
+
+    else {
+      assert(false && "Sanity check.");
+    }    
+  }  
+
+
+  // Instrument the pointer acceses.
   using YarnLoop::PtrInsertList;  
   const PtrInsertList& ptrInstr = YI->getPtrInstrPoints();
   for (PtrInsertList::iterator it = ptrInstr.begin(), itEnd = ptrIntr.end();
@@ -302,48 +461,42 @@ void InstrumentLoopUtil::instrumentTmpBody() {
     PointerInsertPoint* ptrPoint = *it;
     
     if (Type == InstrLoad) {
-      // \todo
+      LoadInst* loadInst = dyn_cast<LoadInst*>(TmpVMap[ptrPoint->getInstruction()]);
+      assert(loadInst && "InstrLoad should be a LoadInst");
+
+      // Call yarn_dep_load to load the desired value into the buffer.
+      std::vector<Value*> args;
+      args.push_back(poolIdVal);
+      args.push_back(loadInst->getPointerOperand()); // src
+      args.push_back(bufferVal); // dest
+      Value* retVal = 
+	CallInst::Create(IMU->getYarnDepLoadFct(), args, 
+			 IMU->makeName('r'), loadInst);
+
+      // Load from the buffer which contains the result of the yarn call.
+      loadInst->setOperand(0, bufferVal);
     }
 
     else if (Type == InstrStore) {
-      // \todo
+      StoreInst* storeInst = dyn_cast<StoreInst*>(TmpVMap[ptrPoint->getInstruction()]);
+      assert(storeInst && "InstrStore should be a StoreInst");
+
+      // call yarn_dep_load after the store instruction.
+      std::vector<Value*> args;
+      args.push_back(poolIdVal);
+      args.push_back(bufferVal); // src
+      args.push_back(storeInst->getPointerOperand()); // dest
+      Value* retVal = 
+	CallInst::Create(IMU->getYarnDepLoadFct(), args, 
+			 IMU->makeName('r'), storeInst);
+
+      // Store into the buffer which is then used by the yarn call.
+      storeInst->setOperand(1, bufferVal);
     }
 
     else {
       assert(false && "Sanity check.");
     }    
-  }
-
-
-  using YarnLoop::ValueInsertList;  
-  const ValueInsertList& valueInstr = YI->getValueInstrPoints();
-  for (ValueInsertList::iterator it = valueInstr.begin(), itEnd = valueIntr.end();
-       it != itEnd; ++it)
-  {
-    PointerInsertPoint* valuePoint = *it;
-    
-    if (Type == InstrLoad) {
-      // \todo
-
-    }
-
-    else if (Type == InstrStore) {
-      // \todo
-    }
-
-    else {
-      assert(false && "Sanity check.");
-    }    
-  }  
-
-  using YarnLoop::InvariantList;
-  const InvariantList& invariants = YI->getInvariants();
-  for (InvariantList::iterator it = invariants.begin(), itEnd = invariants.end();
-       it != itEnd; ++it)
-  {
-    Value* inva = TmpVMap[*it];
-    
-    // \todo replace its user list by the newly created var.
   }
 }
 void InstrumentLoopUtil::cleanupTmp() {

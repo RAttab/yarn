@@ -149,23 +149,41 @@ namespace yarn {
     
     InstrType Type;
     llvm::Value* V;
+    llvm::Value* Pos;
 
-    // Instrumentation will happen AFTER this instruction.
-    llvm::Instruction* Pos;
+    unsigned index;
 
   public :
 
-    ValueInsertPoint (InstrType t, llvm::Value* v, llvm::Instruction p) : 
+    ValueInsertPoint (InstrType t, llvm::Value* v, llvm::Value* p, unsigned index) : 
       Type(t),
       V(v), 
-      Pos(p) 
+      Pos(p),
+      Index(0)
     {}
 
     inline InstrType getType () const  { return Type; }
     /// Returns the value to load/store.
     inline llvm::Value* getValue () const { return V; }
-    /// The instrumentation should take place AFTER the instruction returned.
-    inline llvm::Instruction* getPosition () const { return Pos; }
+
+    /// Indicates that the instrumentation should take place on the 
+    /// specified instruction (before if type == InstrLoad and after 
+    /// if type == InstrStore). If it returns NULL then use getBBPos()
+    /// instead.
+    inline llvm::Instruction* getInstPos () const { 
+      return dyn_cast<llvm::Instruction>(Pos);
+    }
+
+    /// Indicates that the instrumentation should take place on the 
+    /// specified BB (at the beginning if type == InstrLoad and at the
+    /// end if type == InstrStore). If it returns NULL then use 
+    /// getInstPos() instead.
+    inline llvm::BasicBlock* getBBPos () const {
+      return dyn_cast<llvm::BasicBlock>(Pos);
+    }
+
+    /// Index for calls to yarn_dep_xxx_fast
+    inline unsigned getIndex () const { return Index; }
     
   };
 
@@ -190,9 +208,6 @@ namespace yarn {
     // while false indicates that it should be loaded as needed with yarn_load/store.
     typedef std::pair<Value*, bool> EntryValueTuple;
     typedef std::vector<EntryValueTuple> EntryValueList;
-
-    typedef llvm::Instruction* BBPos;
-    typedef std::vector<BBPos> BBPosList;
 
   private:
 
@@ -251,7 +266,7 @@ namespace yarn {
 
     /// List of all the values that need to be passed to the speculative function.
     /// If the tuple contains a true value then it should be loaded in the header.
-    inline const EntryValues& getEntryValues () const { return EntreyValues; }
+    inline const EntryValueList& getEntryValues () const { return EntreyValues; }
 
     
     /// Debug.  
@@ -281,6 +296,11 @@ namespace yarn {
     void processValuePoints ();
 
     void processEntryValues ();
+
+
+
+    typedef llvm::Value* BBPos;
+    typedef std::vector<BBPos> BBPosList;
 
     /// Finds the earliest point where a yarn_load can occur that will 
     /// dominate all the possible reads.
