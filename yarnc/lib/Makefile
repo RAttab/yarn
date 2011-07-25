@@ -15,3 +15,5 @@ USEDLIBS =
 
 include $(LEVEL)/Makefile.common
 
+CXXFLAGS = -Wall -Wextra -Werror -pedantic
+

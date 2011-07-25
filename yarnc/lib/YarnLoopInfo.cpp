@@ -17,6 +17,7 @@
 #include <llvm/User.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/Dominators.h>
+#include <llvm/Analysis/PostDominators.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Support/raw_ostream.h>
@@ -45,10 +46,6 @@ STATISTIC(LoopInvariants, "Invariants found in loop.");
 /// LoopPointer
 
 void LoopPointer::print (raw_ostream &OS) const {
-  OS << "Pointer={" << 
-    "name=" << Pointer->getName() << 
-    "flag=" << (IsRead ? 'r' : '') << (IsWrite ? 'w' : '') <<
-    "}";
 }
 
 
@@ -56,11 +53,6 @@ void LoopPointer::print (raw_ostream &OS) const {
 /// LoopValue
 
 void LoopValue::print (raw_ostream &OS) const {
-  OS << "Value={" << 
-    "name=" << Node->getName() << 
-    "entry=" << EntryValue->getName() <<
-    "exit=" << ExitValue->getName() <<
-    "}";
 }
 
 
@@ -76,7 +68,7 @@ YarnLoop::YarnLoop(Loop* l,
 :
   LI(li), AA(aa), DT(dt), PDT(pdt),
   L(l), Dependencies(), Pointers(), Invariants(),
-  PtrInstrPoints(), ValueInstrPoints(), EntryValues()
+  PointerInstrs(), ValueInstrs(), EntryValues()
 {
   processLoop();
 }
@@ -92,7 +84,7 @@ LoopValue* YarnLoop::getDependencyForValue (Value* val) {
        it != itEnd; ++it)
   {
     LoopValue* lv = *it;
-    if (lv->getEntryValue() == val || lv->getExitValue == val) {
+    if (lv->getEntryValue() == val || lv->getExitValue() == val) {
       return lv;
     }
   }
@@ -107,29 +99,33 @@ void YarnLoop::processLoop () {
   PointerInstSet loadSet;
   PointerInstSet storeSet;
 
-  for (Loop::iterator bb = L->block_begin(), bbEnd = L->block_end(); bb != bbEnd; ++bb) {
-    bool isHeader = *i == L->getHeader();
+  for (Loop::block_iterator bb = L->block_begin(), bbEnd = L->block_end(); 
+       bb != bbEnd; ++bb) 
+  {
+    bool isHeader = *bb == L->getHeader();
 
     for (BasicBlock::iterator i = (*bb)->begin(), iEnd = (*bb)->end(); i != iEnd; ++i) {
+      Instruction* inst = &(*i);
 
-      if (isHeader && PhiNode phi = dyn_cast<PHINode>(*i)) {
+      PHINode* phi = dyn_cast<PHINode>(inst);
+      if (isHeader && phi) {
 	processHeaderPHINode(phi, exitingValueMap);
       }
 
-      else if(StoreInst* si = dyn_cast<StoreInst>(*i)) {
+      else if(StoreInst* si = dyn_cast<StoreInst>(inst)) {
 	Value* ptr = si->getPointerOperand();
 	storeSet.insert(ptr);
 	loadSet.erase(ptr);
       }
 
-      else if (LoadInst* li = dyn_cast<LoadInst>(*i)) {
+      else if (LoadInst* li = dyn_cast<LoadInst>(inst)) {
 	Value* ptr = li->getPointerOperand();
 	if (storeSet.find(ptr) == storeSet.end()) {
 	  loadSet.insert(ptr);
 	}
       }
 
-      else if (Instruction* inst = dyn_cast<User>(*i)){
+      else {
 	processInvariants(inst);
       }      
 
@@ -138,21 +134,15 @@ void YarnLoop::processLoop () {
 
   processPointers(loadSet, storeSet);
 
-  const BBList& exitBlocks = L->getExitBlocks();
-  if (exitBlocks.size() == 1) {
-    const BasicBlock* bb = exitBlocks.front();
-    for (BasicBlock::iterator i = bb->begin(), iEnd = bb->end(); i != iEnd; ++i) {
-      
-      if (PHINode* phi = dyn_cast<PHINode>(*i)) {
-	processFooterPHINode(phi, exitingValueMap);
-      }
+  BasicBlock* exitBlock = L->getExitBlock();
+  for (BasicBlock::iterator i = exitBlock->begin(), iEnd = exitBlock->end(); 
+       i != iEnd; ++i) 
+  {  
+    if (PHINode* phi = dyn_cast<PHINode>(&(*i))) {
+      processFooterPHINode(phi, exitingValueMap);
     }
+  }
     
-  }
-  else {
-    assert(exitBlocks.size() > 1 && 
-	   "Simplify Loop should ensure only a single exit blocks.");
-  }
 
   processValuePoints();
   processPtrPoints();
@@ -166,7 +156,7 @@ void YarnLoop::processLoop () {
 // PHI nodes with all the dependencies used before the loop. We can also use the PHI
 // nodes to get the exiting values which can later be used by the processFooterPHINode.
 void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
-  BasicBlock* loopPred = L->getPredecessor();
+  BasicBlock* loopPred = L->getLoopPredecessor();
 
   LoopValue* lv = new LoopValue();
   lv->HeaderNode = PHI;
@@ -177,8 +167,8 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
   Value* exitingValue;
 
   for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
-    BasicBlock* incBB = PHI->getIncomingBasicBlock(i);
-    Value* incValue = PHI->getIncommingValue(i);
+    BasicBlock* incBB = PHI->getIncomingBlock(i);
+    Value* incValue = PHI->getIncomingValue(i);
 
     if (loopPred == incBB) {
       lv->EntryValue = incValue;
@@ -192,7 +182,7 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
 	 "SimplifyLoop should ensure only one exiting and one entry value.");
 
   Dependencies.push_back(lv);
-  DependenciesMap[exitingValue] = lv;
+  ExitingValueMap[exitingValue] = lv;
 
 }
 
@@ -204,20 +194,17 @@ void YarnLoop::processFooterPHINode(PHINode* PHI, ValueMap& ExitingValueMap) {
 
   LoopValue* lv;
 
-  for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
-    BasicBlock* incBB = PHI->getIncomingBasicBlock(i);
-    Value* incValue = PHI->getIncommingValue(i);
-
-    // Do we already know the value from the header?
-    ValueMap::iterator it = ExitingValueMap.find(incValue);
-    if (it != ExitingValueMap.end()) {
-      lv = it->second;
-      break;
-    }
-
+  Value* incValue = PHI->getIncomingValueForBlock(L->getLoopLatch());
+  if (incValue == NULL) {
+    return;
   }
-
-
+    
+  // Do we already know the value from the header?
+  ValueMap::iterator it = ExitingValueMap.find(incValue);
+  if (it != ExitingValueMap.end()) {
+    lv = it->second;
+  }
+  
   // If we didn't match anything from the header then 
   // this is a new exit-only value.
   if (!lv) {
@@ -244,12 +231,12 @@ namespace {
     for(PointerMap::const_iterator it = StoreMap.begin(), endIt = StoreMap.end(); 
 	it != endIt; ++it)
     {
-      AliasResult ar = AA->alias((*it).first, Ptr);
+      AliasAnalysis::AliasResult ar = AA->alias((*it).first, Ptr);
       
-      if (strict && ar == MustAlias) {
+      if (Strict && ar == AliasAnalysis::MustAlias) {
 	return (*it).second;
       }
-      else if (!strict && ar) {
+      else if (!Strict && ar) {
 	return (*it).second;
       }
     }
@@ -257,7 +244,7 @@ namespace {
     return NULL;
   }
 
-}; // Anonymous namespace
+} // Anonymous namespace
 
 
 /// \todo This will pick up strictly local load and stores that may not alias with
@@ -269,12 +256,12 @@ void YarnLoop::processPointers (PointerInstSet& LoadSet, PointerInstSet& StoreSe
   PointerMap storeMap;
 
   for (PointerInstSet::iterator it = StoreSet.begin(), itEnd = StoreSet.end(); 
-       it != iEnd; ++it)
+       it != itEnd; ++it)
   {
     LoopPointer* lp = isKnownAlias(AA, storeMap, *it, true);
     if (!lp) {
       lp = new LoopPointer();
-      Pointers.push_back(*it);
+      Pointers.push_back(lp);
     }
 
     lp->Aliases.push_back(*it);
@@ -296,7 +283,7 @@ void YarnLoop::processPointers (PointerInstSet& LoadSet, PointerInstSet& StoreSe
     if (isKnownAlias(AA, storeMap, *it, false) != NULL) {
       lp = new LoopPointer();
       lp->Aliases.push_back(*it);
-      Pointers.push_back(*it);
+      Pointers.push_back(lp);
       continue;
     }
 
@@ -331,17 +318,23 @@ void YarnLoop::processEntryValues () {
     EntryValues.push_back(std::make_pair((*it)->getEntryValue(), false));
   }
 
-  for (PointerList::iterator it = Pointers.begin(), itEnd = Points.end(); 
+  for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end(); 
        it != itEnd; ++it)
   {
-    using LoopPointer::AliasList;
-    const AliasList& aliases = (*it)->getAliasList();
-
+    typedef LoopPointer::AliasList AliasList;
+    AliasList& aliases = (*it)->getAliasList();
     for (AliasList::iterator aliasIt = aliases.begin(), aliasEndIt = aliases.end();
 	 aliasIt != aliasEndIt; ++aliasIt)
     {
-      Value* alias = *it;
-      if (L->contains(alias->getParent())) {
+      Value* alias = *aliasIt;
+      bool outsideLoop = false;
+      if (isa<Argument>(alias)) {
+	outsideLoop = true;
+      }
+      else if(Instruction* inst = dyn_cast<Instruction>(alias)) {
+	outsideLoop = L->contains(inst->getParent());
+      }
+      if (outsideLoop) {
 	EntryValues.push_back(std::make_pair(alias, true));
       }
     }
@@ -372,19 +365,22 @@ namespace {
 
   };
 
-}; // Anonymous namespace
+} // Anonymous namespace
 
 
 /// \todo This is currently not optimal.
 ///   If the two earliest stores are done on two parallel branches then we should
 ///   return the two load instructions and not their dominator.
-BBPosList YarnLoop::findLoadPos (const Value* Value) const {
+YarnLoop::BBPosList YarnLoop::findLoadPos (Value* V) const {
   // Find the common dominator for all the load operations.
   BasicBlock* loadBB = NULL;
-  for (Value::const_use_iterator it = Value->begin(), endIt = Value->end();
+  for (Value::use_iterator it = V->use_begin(), endIt = V->use_end();
        it != endIt; ++it)
   {
-    BasicBlock* bb = (*it)->getParent();
+    Instruction* inst = dyn_cast<Instruction>(*it);
+    assert(inst && "Sanity check.");
+
+    BasicBlock* bb = inst->getParent();
     if (loadBB == NULL) {
       loadBB = bb;
       continue;
@@ -399,10 +395,13 @@ BBPosList YarnLoop::findLoadPos (const Value* Value) const {
   //    return the pos right before it.
   // otherwise return the last position in the BB.
   BBPosList posList;
-  for (Value::const_use_iterator it = Value->begin(), endIt = Value->end();
+  for (Value::use_iterator it = V->use_begin(), endIt = V->use_end();
        it != endIt; ++it)
   {
-    BBInstPredicate pred(*it);
+    Instruction* inst = dyn_cast<Instruction>(*it);
+    assert(inst && "Sanity check.");
+
+    BBInstPredicate pred(inst);
     BasicBlock::iterator findIt = std::find_if(loadBB->begin(), loadBB->end(), pred);
     if (findIt != loadBB->end()) {
       posList.push_back(&(*findIt));
@@ -416,42 +415,41 @@ BBPosList YarnLoop::findLoadPos (const Value* Value) const {
 
 namespace {
 
-  typedef Instruction* InstructionList;
+  typedef std::vector<Instruction*> InstructionList;
 
   void findWriteInstructions (PHINode* PHI, InstructionList& OutList) {
 
-    for (int i = 0; i < PHI->getNumIncomingValues(); ++i) {
-
-      BasicBlock* incBB = PHI->getIncomingBasicBlock(i);
-      Value* incValue = PHI->getIncommingValue(i);
+    for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
+      Value* incValue = PHI->getIncomingValue(i);
 
       if (PHINode* node = dyn_cast<PHINode>(incValue)) {
-	// Avoid the infinit loop.
-	if (PHI->getParent() == L->getHeader()) {
-	  continue;
-	}
 	findWriteInstructions(node, OutList);
       }
-
       else if (Instruction* inst = dyn_cast<Instruction>(incValue)) {
 	OutList.push_back(inst);
       }
 
     }
-
   }
 
-}; // Anonymous namespace
+  bool isInLoop (Loop* l, Value* v) {
+    if (Instruction* inst = dyn_cast<Instruction>(v)) {
+      return l->contains(inst);
+    }
+    return false;
+  }
 
-BBPosList YarnLoop::findStorePos (const Value* Value) const {
-  Instructionlist storeList;
+} // Anonymous namespace
+
+YarnLoop::BBPosList YarnLoop::findStorePos (Value* V) const {
+  InstructionList storeList;
 
   // Gather the list of all the non-phi store instruction for the value.
-  if (PHINode* phi = dyn_cast<PHINode>(value)) {
+  if (PHINode* phi = dyn_cast<PHINode>(V)) {
     findWriteInstructions(phi, storeList);
   }
-  else if (Instruction* inst = dyn_cast<Instruction*>(Value)) {
-    storeList.push_back(Value);
+  else if (Instruction* inst = dyn_cast<Instruction>(V)) {
+    storeList.push_back(inst);
   }
   else {
     assert(false && "findStore requires an instruction as an input.");
@@ -498,42 +496,42 @@ BBPosList YarnLoop::findStorePos (const Value* Value) const {
 
 // Ugliest for loops EVAR...
 void YarnLoop::processPtrPoints () {
-  using LoopPointer::AliasList;
+  typedef LoopPointer::AliasList AliasList;
 
   for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end();
        it != itEnd; ++it)
   {
 
-    const AliasList& aliasList = (*it)->getAliasList();
-    for (AliasList::const_iterator aliasIt = aliasList.begin(), 
+    AliasList& aliasList = (*it)->getAliasList();
+    for (AliasList::iterator aliasIt = aliasList.begin(), 
 	   aliasEndIt = aliasList.end();
 	 aliasIt != aliasEndIt; ++aliasIt)
     {
 
       Value* alias = *aliasIt;
-      for (Value::const_use_iterator useIt =  alias->use_begin(), 
+      for (Value::use_iterator useIt =  alias->use_begin(), 
 	     useEndIt = alias->use_end();
 	   useIt != useEndIt; ++useIt)
       {
 	User* user = *useIt;
 	// Make sure we're still in the loop.
-	if (!L->contains(user->getParent())) {
+	if (!isInLoop(L, user)) {
 	  continue;
 	}
 
-	PointerInsertPoint* pip = NULL;
+	PointerInstr* pip = NULL;
 
 	if (StoreInst* si = dyn_cast<StoreInst>(user)) {
-	  pip = new PointerInsertPoint(InstrStore, si);
+	  pip = new PointerInstr(InstrStore, si);
 	}
 	else if (LoadInst* li = dyn_cast<LoadInst>(user)) {
-	  pip = new PointerInsertPoint(InstrLoad, li);
+	  pip = new PointerInstr(InstrLoad, li);
 	}
 	else {
 	  continue;
 	}
 	
-	PtrInstrPoints->push_back(pip);
+	PointerInstrs.push_back(pip);
 
       } // use iteration
     } // alias iteration
@@ -559,23 +557,23 @@ void YarnLoop::processValuePoints () {
       for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
 	   posIt != posEndIt; ++posIt)
       {
-	ValueInsertPoint* vip = new ValueInsertPoint(InstrLoad, loadVal, *posIt, index);
-	ValueInstrPoint.push_back(vip);
+	ValueInstr* vip = new ValueInstr(InstrLoad, loadVal, *posIt, index);
+	ValueInstrs.push_back(vip);
       }
     }
 
     // Process the stores.
     {
       Value* writeVal = (*it)->getExitValue();
-      BBPosList posList = findWritePos(writeVal);
+      BBPosList posList = findStorePos(writeVal);
       assert(posList.size() > 0 &&
 	     "There should be at least one store point.");
 
       for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
 	   posIt != posEndIt; ++posIt)
       {
-	ValueInsertPoint* vip = new ValueInsertPoint(InstrWrite, writeVal, *posIt, index);
-	ValueInstrPoint.push_back(vip);
+	ValueInstr* vip = new ValueInstr(InstrStore, writeVal, *posIt, index);
+	ValueInstrs.push_back(vip);
       }
     }
 
@@ -611,14 +609,16 @@ void YarnLoopInfo::getAnalysisUsage (AnalysisUsage &AU) const {
 
 bool YarnLoopInfo::runOnFunction (Function& F) {
 
-  LI = getAnalysis<LoopInfo>();
+  LI = &getAnalysis<LoopInfo>();
   AA = &getAnalysis<AliasAnalysis>();
   DominatorTree* dt = &getAnalysis<DominatorTree>();
   PostDominatorTree* pdt = &getAnalysis<PostDominatorTree>();
     
-  for (LoopInfo::iterator i = LI.begin(), end = LI.end(); i != end; ++i) {
+  for (LoopInfo::iterator it = LI->begin(), itEnd = LI->end(); 
+       it != itEnd; ++it) 
+  {
 
-    Loop* loop = &(*i);
+    Loop* loop = *it;
     if (!checkLoop(loop)) {
       continue;
     }
@@ -644,15 +644,17 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
 
 /// Because we can't currently instrument functions we're not working on,
 /// ignore any loop with non-trivial function calls.
-/// \todo We could easily support functions that only modify it's arguments.
 bool YarnLoopInfo::checkLoop (Loop* L) {
   assert(L->isLoopSimplifyForm());
-  assert(L->getNumBackEdges() == 1);
+  assert(L->isLCSSAForm());
 
-  for (Loop::iterator bb = L->block_begin(), bbEnd = L->block_end(); bb != bbEnd; ++bb) {
-    for (BasicBlock::iterator i = (*bb)->begin(), iEnd = (*bb)->end(); i != iEnd; ++i) {
-
-      if (CallInst* ci = dyn_cast<CallInst>(*i)) {
+  for (Loop::block_iterator bbIt = L->block_begin(), bbEndIt = L->block_end(); 
+       bbIt != bbEndIt; ++bbIt) 
+  {
+    for (BasicBlock::iterator it = (*bbIt)->begin(), itEnd = (*bbIt)->end(); 
+	 it != itEnd; ++it) 
+    {
+      if (CallInst* ci = dyn_cast<CallInst>(&(*it))) {
 	if (!AA->doesNotAccessMemory(ci)) {
 	  return false;
 	}
@@ -661,6 +663,8 @@ bool YarnLoopInfo::checkLoop (Loop* L) {
     }
   }
 
+  // \todo Type checking. Probably has to be done after the analysis though.
+  return true;
 }
 
 
@@ -669,33 +673,28 @@ bool YarnLoopInfo::checkLoop (Loop* L) {
 ///       - Check for inner loops.
 bool YarnLoopInfo::keepLoop (YarnLoop* YL) {
   int depCount = 0;
-  depCount += YL->getPtrInstrPoints().size();
-  depCount += YL->getValueInstrPoints().size();
+  depCount += YL->getPointerInstrs().size();
+  depCount += YL->getValueInstrs().size();
 
   int loopSize = 0;
   Loop* l = YL->getLoop();
-  for (Loop::iterator bb = l->block_begin(), bbEnd = l->block_end(); bb != bbEnd; ++bb) {
-    loopSize += bb->size();
+  for (Loop::block_iterator bbIt = l->block_begin(), bbEndIt = l->block_end(); 
+       bbIt != bbEndIt; ++bbIt) 
+  {
+    loopSize += (*bbIt)->size();
   }
 
   double ratio = depCount / loopSize;
-  return ration < 0.25;
+  return ratio < 0.25;
 }
 
 
 void YarnLoopInfo::releaseMemory () {
-  VectorUtil<YarnLoop*>::free(Loops);
+  VectorUtil<YarnLoop>::free(Loops);
 }
 
 
 void YarnLoopInfo::print (raw_ostream &O, const Module *M) const {
-  O << "YarnLoopInfo(" << M->getName() << "): " << 
-    Loops.size() << " Loops found.\n";
-
-  for (iterator i = Loops.begin(), end = Loops.end(); i != end; ++i) {
-    (*i)->print(O);
-  }
-
 }
 
 

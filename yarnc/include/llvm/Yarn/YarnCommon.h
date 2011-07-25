@@ -14,9 +14,10 @@
 #ifndef YARN_COMMON_H
 #define YARN_COMMON_H
 
-#include <cstdint>
+#include <vector>
+#include <tr1/cstdint>
 
-namespapce yarn {
+namespace yarn {
 
   
 //===----------------------------------------------------------------------===//
@@ -25,8 +26,8 @@ namespapce yarn {
 ///
   typedef uint_fast32_t YarnWord;
   enum {
-    YarnWordBitSize = (sizeof(YarnWord)*8);
-    YarnWord64 = YarnWordBitSize == 64;
+    YarnWordBitSize = (sizeof(YarnWord)*8),
+    YarnWord64 = YarnWordBitSize == 64
   };
 
 
@@ -50,22 +51,26 @@ namespapce yarn {
   class Noncopyable {
     Noncopyable (const Noncopyable&);
     Noncopyable& operator= (const Noncopyable&);
+  public:
+    Noncopyable () {}
   };
 
 
 //===----------------------------------------------------------------------===//
 /// Utility class for std::vector
 ///
-  struct VectorUtil<typename T> {
+  template<typename T>
+  struct VectorUtil {
     static void free (std::vector<T*>& v) {
       while(!v.empty()) {
-	T* = v.pop_back();
-	delete T;
+	T* ptr = v.back();
+	v.pop_back();
+	delete ptr;
       }
     }
-  }
+  };
 
 
-}; // namespace yarn
+} // namespace yarn
 
 #endif // YARN_COMMON_H

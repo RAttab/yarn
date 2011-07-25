@@ -19,23 +19,26 @@
 #include <llvm/Function.h>
 #include <llvm/Module.h>
 #include <llvm/BasicBlock.h>
+#include <llvm/Instructions.h>
+#include <llvm/Support/Casting.h>
 #include <vector>
 #include <map>
 #include <set>
 
 
-namespace yarn {
+// Forward declarations.
+namespace llvm {
 
-  class llvm::Value;
-  class llvm::User;
-  class llvm::Instruction;
-  class llvm::PHINode;
-  class llvm::AnalysisUsage;
-  class llvm::AliasAnalysis;
-  class llvm::DominatorTree;
-  class llvm::LoopInfo;
-  class llvm::raw_ostream;
-  class std::ostream;
+  class Loop;
+  class LoopInfo;
+  class AliasAnalysis;
+  class PostDominatorTree;
+  class DominatorTree;
+
+}
+
+
+namespace yarn {
 
   class YarnLoop;
 
@@ -45,7 +48,7 @@ namespace yarn {
   class LoopPointer : public Noncopyable {
   public:
     
-    typedef std::vector<Value*> AliasList;
+    typedef std::vector<llvm::Value*> AliasList;
 
   private:
 
@@ -57,7 +60,7 @@ namespace yarn {
 
 
     /// Returns the list of pointers that are known to always be aliases.
-    inline const AliasList& getAliasList () const { return AliasList; }
+    inline AliasList& getAliasList () { return Aliases; }
 
 
     /// Debug.  
@@ -125,14 +128,14 @@ namespace yarn {
 
 //===----------------------------------------------------------------------===//
 /// Holds the pointer instruction that needs to be instrumented.
-  class PointerInsertPoint : public Noncopyable {
+  class PointerInstr : public Noncopyable {
     
     InstrType Type;
     llvm::Instruction* I;
 
   public :
     
-    PointerInsertPoint (InstrType t, llvm::Instruction* i) : 
+    PointerInstr (InstrType t, llvm::Instruction* i) : 
       Type(t),
       I(i) 
     {}
@@ -145,21 +148,18 @@ namespace yarn {
 
 //===----------------------------------------------------------------------===//
 /// Indicates where the load/store instrumentation for a value should placed.
-  class ValueInsertPoint : public Noncopyable {
+  class ValueInstr : public Noncopyable {
     
     InstrType Type;
     llvm::Value* V;
     llvm::Value* Pos;
 
-    unsigned index;
+    unsigned Index;
 
   public :
 
-    ValueInsertPoint (InstrType t, llvm::Value* v, llvm::Value* p, unsigned index) : 
-      Type(t),
-      V(v), 
-      Pos(p),
-      Index(0)
+    ValueInstr (InstrType t, llvm::Value* v, llvm::Value* p, unsigned i) : 
+      Type(t), V(v), Pos(p), Index(i)
     {}
 
     inline InstrType getType () const  { return Type; }
@@ -171,7 +171,7 @@ namespace yarn {
     /// if type == InstrStore). If it returns NULL then use getBBPos()
     /// instead.
     inline llvm::Instruction* getInstPos () const { 
-      return dyn_cast<llvm::Instruction>(Pos);
+      return llvm::dyn_cast<llvm::Instruction>(Pos);
     }
 
     /// Indicates that the instrumentation should take place on the 
@@ -179,7 +179,7 @@ namespace yarn {
     /// end if type == InstrStore). If it returns NULL then use 
     /// getInstPos() instead.
     inline llvm::BasicBlock* getBBPos () const {
-      return dyn_cast<llvm::BasicBlock>(Pos);
+      return llvm::dyn_cast<llvm::BasicBlock>(Pos);
     }
 
     /// Index for calls to yarn_dep_xxx_fast
@@ -201,12 +201,12 @@ namespace yarn {
     typedef std::vector<LoopPointer*> PointerList; 
     typedef std::vector<llvm::Value*> InvariantList;
    
-    typedef std::vector<PointerInsertPoint*> PtrInsertList;
-    typedef std::vector<ValueInsertPoint*> ValueInsertList;
+    typedef std::vector<PointerInstr*> PointerInstrList;
+    typedef std::vector<ValueInstr*> ValueInstrList;
 
     // A true value indicates that it should be loaded right-away.
     // while false indicates that it should be loaded as needed with yarn_load/store.
-    typedef std::pair<Value*, bool> EntryValueTuple;
+    typedef std::pair<llvm::Value*, bool> EntryValueTuple;
     typedef std::vector<EntryValueTuple> EntryValueList;
 
   private:
@@ -229,8 +229,8 @@ namespace yarn {
     InvariantList Invariants;
 
     /// List locations where isntrumentation should be added.
-    PtrInsertList PtrInstrPoints;
-    ValueInsertList ValueInstrPoints;
+    PointerInstrList PointerInstrs;
+    ValueInstrList ValueInstrs;
 
     /// List of all the values that need to be passed to the speculative function.
     EntryValueList EntryValues;
@@ -246,13 +246,13 @@ namespace yarn {
     ~YarnLoop();
 
     /// Returns the llvm::Loop object that represents our loop.
-    inline const llvm::Loop* getLoop () const { return L; }
+    inline llvm::Loop* getLoop () { return L; }
 
     /// List of all the values that need to be instrumented.
     inline const ValueList& getDependencies () const { return Dependencies; }
 
     /// Returns the LoopValue for a given entry or exit value.
-    inline LoopValue* getDependencyForValue (Value*);
+    LoopValue* getDependencyForValue (llvm::Value* v);
     
     /// List of all the pointers that need to be instrumented.
     inline const PointerList& getPointers () const { return Pointers; }
@@ -262,14 +262,14 @@ namespace yarn {
     inline const InvariantList& getInvariants () const { return Invariants; }
 
     /// Instrumentation points for the pointer dependencies.
-    inline const PtrInstrList& getPtrInstrPoints () const { return PtrInstrPoints; }
+    inline const PointerInstrList& getPointerInstrs () const { return PointerInstrs; }
 
     /// Instrumentation points for the value dependencies.
-    inline const ValueInstrList& getValueInstrPoints () const { return ValueInstrPoints; }
+    inline const ValueInstrList& getValueInstrs () const { return ValueInstrs; }
 
     /// List of all the values that need to be passed to the speculative function.
     /// If the tuple contains a true value then it should be loaded in the header.
-    inline const EntryValueList& getEntryValues () const { return EntreyValues; }
+    inline const EntryValueList& getEntryValues () const { return EntryValues; }
 
     
     /// Debug.  
@@ -280,7 +280,7 @@ namespace yarn {
   private:
 
     typedef std::map<llvm::Value*, LoopValue*>  ValueMap;    
-    typedef std::set<llvm::Instruction*> PointerInstSet;
+    typedef std::set<llvm::Value*> PointerInstSet;
 
     // Loops over the instructions and dispatches to functions below.
     void processLoop ();
@@ -308,13 +308,13 @@ namespace yarn {
     /// Finds the earliest point where a yarn_load can occur that will 
     /// dominate all the possible reads.
     /// Only supports LoopValues for now.
-    BBPosList findLoadPos (const Value* value) const;
+    BBPosList findLoadPos (llvm::Value* V) const;
 
     /// Finds the latest point where a yarn_store can occur that will be dominated
     /// by all the possible writes.
     /// Only supports LoopValues for now.
     /// \todo Could also do LoopPointer if we know that they're aliases.
-    BBPosList findStorePos (const Value* value) const;
+    BBPosList findStorePos (llvm::Value* value) const;
 
 
   };
@@ -326,7 +326,7 @@ namespace yarn {
   public:
 
     typedef std::vector<YarnLoop*> LoopList;
-    typedef Loops::iterator iterator;
+    typedef LoopList::iterator iterator;
 
   private:
 
@@ -361,7 +361,7 @@ namespace yarn {
   };
 
 
-}; // namespace yarn.
+} // namespace yarn.
 
 
 #endif // YARN_LOOP_INFO_H
