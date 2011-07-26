@@ -1,4 +1,4 @@
-//===- YarnLoop.h - Example code from "Writing an LLVM Pass" --------------===//
+//===- YarnCommon.h - Example code from "Writing an LLVM Pass" ------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,18 +7,16 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Yarnc loop analysis pass.
+// Common utility header for the include folder.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef YARN_COMMON_H
 #define YARN_COMMON_H
 
-#include <vector>
 #include <tr1/cstdint>
 
 namespace yarn {
-
   
 //===----------------------------------------------------------------------===//
 /// These type are used to declare the libyarn interface.
@@ -55,20 +53,6 @@ namespace yarn {
     Noncopyable () {}
   };
 
-
-//===----------------------------------------------------------------------===//
-/// Utility class for std::vector
-///
-  template<typename T>
-  struct VectorUtil {
-    static void free (std::vector<T*>& v) {
-      while(!v.empty()) {
-	T* ptr = v.back();
-	v.pop_back();
-	delete ptr;
-      }
-    }
-  };
 
 
 } // namespace yarn

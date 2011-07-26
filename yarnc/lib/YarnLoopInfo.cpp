@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "yarn-loopinfo"
+#include "YarnUtil.h"
 #include <llvm/Yarn/YarnLoopInfo.h>
 #include <llvm/Value.h>
 #include <llvm/User.h>
@@ -60,14 +61,15 @@ void LoopValue::print (raw_ostream &OS) const {
 //===----------------------------------------------------------------------===//
 /// YarnLoop
 
-YarnLoop::YarnLoop(Loop* l, 
-	 LoopInfo* li,
-	 AliasAnalysis* aa, 
-	 DominatorTree* dt,
-	 PostDominatorTree* pdt) 
+YarnLoop::YarnLoop(Function* f,
+		   Loop* l, 
+		   LoopInfo* li,
+		   AliasAnalysis* aa, 
+		   DominatorTree* dt,
+		   PostDominatorTree* pdt) 
 :
   LI(li), AA(aa), DT(dt), PDT(pdt),
-  L(l), Dependencies(), Pointers(), Invariants(),
+  F(f), L(l), Dependencies(), Pointers(), Invariants(),
   PointerInstrs(), ValueInstrs(), EntryValues()
 {
   processLoop();
@@ -134,7 +136,8 @@ void YarnLoop::processLoop () {
 
   processPointers(loadSet, storeSet);
 
-  BasicBlock* exitBlock = L->getExitBlock();
+  BasicBlock* exitBlock = L->getUniqueExitBlock();
+  assert(exitBlock && "SimplifyLoop should ensure a single exit block.");
   for (BasicBlock::iterator i = exitBlock->begin(), iEnd = exitBlock->end(); 
        i != iEnd; ++i) 
   {  
@@ -144,8 +147,8 @@ void YarnLoop::processLoop () {
   }
     
 
-  processValuePoints();
-  processPtrPoints();
+  processValueInstrs();
+  processPointerInstrs();
 
   processEntryValues();
 
@@ -161,11 +164,6 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
   LoopValue* lv = new LoopValue();
   lv->HeaderNode = PHI;
 
-  assert(lv->getNumIncomingValues == 2 &&
-	 "SimplifyLoop should ensure only one exiting and one entry value.");
-
-  Value* exitingValue;
-
   for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
     BasicBlock* incBB = PHI->getIncomingBlock(i);
     Value* incValue = PHI->getIncomingValue(i);
@@ -174,15 +172,15 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
       lv->EntryValue = incValue;
     }
     else {
-      exitingValue = incValue;
+      lv->ExitingValue = incValue;
     }
   }
 
-  assert((lv->EntryValue != NULL && exitingValue != NULL) &&
+  assert((lv->EntryValue != NULL && lv->ExitingValue != NULL) &&
 	 "SimplifyLoop should ensure only one exiting and one entry value.");
 
   Dependencies.push_back(lv);
-  ExitingValueMap[exitingValue] = lv;
+  ExitingValueMap[lv->ExitingValue] = lv;
 
 }
 
@@ -193,11 +191,12 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
 void YarnLoop::processFooterPHINode(PHINode* PHI, ValueMap& ExitingValueMap) {
 
   LoopValue* lv;
-
-  Value* incValue = PHI->getIncomingValueForBlock(L->getLoopLatch());
-  if (incValue == NULL) {
+  
+  int bbIndex = PHI->getBasicBlockIndex(L->getLoopLatch());
+  if (bbIndex < 0) {
     return;
   }
+  Value* incValue = PHI->getIncomingValue(bbIndex);
     
   // Do we already know the value from the header?
   ValueMap::iterator it = ExitingValueMap.find(incValue);
@@ -379,6 +378,10 @@ YarnLoop::BBPosList YarnLoop::findLoadPos (Value* V) const {
   {
     Instruction* inst = dyn_cast<Instruction>(*it);
     assert(inst && "Sanity check.");
+    
+    if (!isInLoop(L, inst)) {
+      continue;
+    }
 
     BasicBlock* bb = inst->getParent();
     if (loadBB == NULL) {
@@ -400,6 +403,9 @@ YarnLoop::BBPosList YarnLoop::findLoadPos (Value* V) const {
   {
     Instruction* inst = dyn_cast<Instruction>(*it);
     assert(inst && "Sanity check.");
+    if (!isInLoop(L, inst)) {
+      continue;
+    }
 
     BBInstPredicate pred(inst);
     BasicBlock::iterator findIt = std::find_if(loadBB->begin(), loadBB->end(), pred);
@@ -432,16 +438,11 @@ namespace {
     }
   }
 
-  bool isInLoop (Loop* l, Value* v) {
-    if (Instruction* inst = dyn_cast<Instruction>(v)) {
-      return l->contains(inst);
-    }
-    return false;
-  }
-
 } // Anonymous namespace
 
 YarnLoop::BBPosList YarnLoop::findStorePos (Value* V) const {
+  assert(V && "V == NULL");
+
   InstructionList storeList;
 
   // Gather the list of all the non-phi store instruction for the value.
@@ -454,7 +455,6 @@ YarnLoop::BBPosList YarnLoop::findStorePos (Value* V) const {
   else {
     assert(false && "findStore requires an instruction as an input.");
   }
-  
   
   // Find the common dominator for all the load operations.
   BasicBlock* storeBB = NULL;
@@ -495,7 +495,7 @@ YarnLoop::BBPosList YarnLoop::findStorePos (Value* V) const {
 
 
 // Ugliest for loops EVAR...
-void YarnLoop::processPtrPoints () {
+void YarnLoop::processPointerInstrs () {
   typedef LoopPointer::AliasList AliasList;
 
   for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end();
@@ -539,7 +539,7 @@ void YarnLoop::processPtrPoints () {
 
 }
 
-void YarnLoop::processValuePoints () {
+void YarnLoop::processValueInstrs () {
 
   unsigned index = 0;
 
@@ -564,7 +564,7 @@ void YarnLoop::processValuePoints () {
 
     // Process the stores.
     {
-      Value* writeVal = (*it)->getExitValue();
+      Value* writeVal = (*it)->getExitingValue();
       BBPosList posList = findStorePos(writeVal);
       assert(posList.size() > 0 &&
 	     "There should be at least one store point.");
@@ -596,18 +596,32 @@ char YarnLoopInfo::ID = 0;
 
 
 void YarnLoopInfo::getAnalysisUsage (AnalysisUsage &AU) const {
+  errs() << "START YarnLoopInfo::getAnalysisUsage\n";
+
   AU.setPreservesAll();
-    
+
+  /* LLVM Won't schedul these two for whatever reason...
+     if we try to do it from the Instrumentation pass instead it'll schedul them
+     after this pass which is not any better.
+     Current work around is to do it from the command line instead...
+
   AU.addRequiredID(LCSSAID);
   AU.addRequiredID(LoopSimplifyID);
+  */
 
   AU.addRequired<LoopInfo>();
   AU.addRequired<PostDominatorTree>();
   AU.addRequired<DominatorTree>();
   AU.addRequiredTransitive<AliasAnalysis>();
+
+  errs() << "END   YarnLoopInfo::getAnalysisUsage\n";
+
 }
 
 bool YarnLoopInfo::runOnFunction (Function& F) {
+
+  errs() << "START YarnLoopInfo::runOnFunction(F=" << F.getName() <<")\n";
+
 
   LI = &getAnalysis<LoopInfo>();
   AA = &getAnalysis<AliasAnalysis>();
@@ -619,11 +633,11 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
   {
 
     Loop* loop = *it;
-    if (!checkLoop(loop)) {
+    if (!checkLoop(loop, dt)) {
       continue;
     }
 
-    YarnLoop* yLoop = new YarnLoop(loop, LI, AA, dt, pdt);
+    YarnLoop* yLoop = new YarnLoop(&F, loop, LI, AA, dt, pdt);
     if (keepLoop(yLoop)) {
       Loops.push_back(yLoop);
       
@@ -638,15 +652,17 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
     }      
   }
 
+  errs() << "END   YarnLoopInfo::runOnFunction(F=" << F.getName() <<")\n";
+
   return false;
 }
 
 
 /// Because we can't currently instrument functions we're not working on,
 /// ignore any loop with non-trivial function calls.
-bool YarnLoopInfo::checkLoop (Loop* L) {
+bool YarnLoopInfo::checkLoop (Loop* L, DominatorTree* DT) {
   assert(L->isLoopSimplifyForm());
-  assert(L->isLCSSAForm());
+  assert(L->isLCSSAForm(*DT));
 
   for (Loop::block_iterator bbIt = L->block_begin(), bbEndIt = L->block_end(); 
        bbIt != bbEndIt; ++bbIt) 

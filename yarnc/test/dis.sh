@@ -5,20 +5,26 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-PLAIN_BC=dis.bc
-PLAIN_LL=dis.ll
+OUT_NAME=Debug+Asserts
+BIN_PATH=~/code/llvm/$OUT_NAME/bin
 
-OPT_BC=dis-opt.bc
-OPT_LL=dis-opt.ll
+PLAIN_BC=plain-dis.bc
+PLAIN_LL=plain-dis.ll
+
+OPT_BC=opt-dis.bc
+OPT_LL=opt-dis.ll
+
+YARN_BC=yarn-dis.bc
+YARN_LL=yarn-dis.ll
 
 clang -emit-llvm -O0 $1 -c -o $PLAIN_BC
 
-opt -O3 $PLAIN_BC -o $OPT_BC
-opt -loopsimplify $OPT_BC -o $OPT_BC
+$BIN_PATH/opt -O3 $PLAIN_BC -o $OPT_BC
+echo $BIN_PATH/opt -load=../$OUT_NAME/lib/LLVMYarnc.so -loopsimplify -lcssa -yarn-loop -debug-pass=Structure $OPT_BC -o $YARN_BC
+$BIN_PATH/opt -load=../$OUT_NAME/lib/LLVMYarnc.so -loopsimplify -lcssa -yarn-loop -debug-pass=Structure $OPT_BC -o $YARN_BC
 
 llvm-dis $PLAIN_BC -o $PLAIN_LL
 llvm-dis $OPT_BC -o $OPT_LL
-
-rm $PLAIN_BC $OPT_BC
+llvm-dis $YARN_BC -o $YARN_LL
 
 exit

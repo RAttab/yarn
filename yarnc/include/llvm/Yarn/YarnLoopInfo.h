@@ -88,10 +88,12 @@ namespace yarn {
     // Value of the dependency before the loop.
     llvm::Value* EntryValue;
 
+    llvm::Value* ExitingValue;
+
   public:
     
     LoopValue () :
-      HeaderNode(NULL), FooterNode(NULL), EntryValue(NULL)
+      HeaderNode(NULL), FooterNode(NULL), EntryValue(NULL), ExitingValue(NULL)
     {}
 
     /// The phi node in the loop header used to determine what the 
@@ -107,6 +109,8 @@ namespace yarn {
     /// Value that is used within the loop and that continues to exist after the loop.
     /// Null if the value isn't used after the loop.
     inline llvm::Value* getExitValue () const { return FooterNode; }
+
+    inline llvm::Value* getExitingValue() const { return ExitingValue; }
 
     /// Debug.  
     inline void print (llvm::raw_ostream &OS) const;
@@ -215,7 +219,10 @@ namespace yarn {
     llvm::AliasAnalysis* AA;
     llvm::DominatorTree* DT;
     llvm::PostDominatorTree* PDT;
-    
+
+    /// The function that the loop belongs too.
+    llvm::Function* F;
+    /// The loop being analyzed.
     llvm::Loop* L;
 
     /// Represents a list of values that are used within and before/after the loop.
@@ -237,7 +244,8 @@ namespace yarn {
 
   public:
     
-    YarnLoop(llvm::Loop* l, 
+    YarnLoop(llvm::Function* f,
+	     llvm::Loop* l, 
 	     llvm::LoopInfo* li,
 	     llvm::AliasAnalysis* aa, 
 	     llvm::DominatorTree* dt,
@@ -294,9 +302,9 @@ namespace yarn {
     void processInvariants (llvm::Instruction* I);
 
     /// Finds the instrumentation points for all the pointer dependencies.
-    void processPtrPoints ();
+    void processPointerInstrs ();
     /// Finds the instrumentation points for all the value dependencies.
-    void processValuePoints ();
+    void processValueInstrs ();
 
     void processEntryValues ();
 
@@ -352,7 +360,7 @@ namespace yarn {
   private:
 
     /// Checks the loop to make sure it doesn't contain any unsupported features.
-    bool checkLoop (llvm::Loop* L);
+    bool checkLoop (llvm::Loop* L, llvm::DominatorTree* dt);
     
     /// Determines whether the loop is worth instrumenting or not.
     bool keepLoop (YarnLoop* YL);

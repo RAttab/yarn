@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "yarnloop"
+#include "YarnUtil.h"
 #include <llvm/Yarn/YarnLoopInfo.h>
 #include <llvm/Yarn/YarnCommon.h>
 #include <llvm/Pass.h>
@@ -235,7 +236,7 @@ void InstrumentModuleUtil::createDeclarations () {
 
   {
     std::vector<const Type*> args;
-    args.push_back(YarnExecutorFctTy); //yarn_executor_t executor
+    args.push_back(PointerType::getUnqual(YarnExecutorFctTy)); //yarn_executor_t executor
     args.push_back(VoidPtrTy); // void* data
     args.push_back(YarnWordTy); // thread_count
     args.push_back(YarnWordTy); // ws_size
@@ -320,11 +321,11 @@ void InstrumentLoopUtil::createTmpFct () {
 
   // Create pool_id and task argument placeholders. Needed by createNewFct.
   Value* poolIdVal = 
-    new BitCastInst(ConstantInt::get(Type::getInt8Ty(IMU->getContext()), 0),
+    new BitCastInst(ConstantInt::get(IMU->getYarnWordType(), 0),
 		    IMU->getYarnWordType(), IMU->makeName('z'), instrHeader);
   Value* taskPtr = 
-    new BitCastInst(ConstantInt::get(Type::getInt8Ty(IMU->getContext()), 0),
-		    IMU->getVoidPtrType(), IMU->makeName('z'), instrHeader);
+    new IntToPtrInst(ConstantInt::get(IMU->getYarnWordType(), 0),
+		      IMU->getVoidPtrType(), IMU->makeName('z'), instrHeader);
   
   // struct task* s = (struct task*) task;
   Value* loopArrayPtr =
@@ -341,7 +342,7 @@ void InstrumentLoopUtil::createTmpFct () {
 
   for (unsigned i = 0; i < entryValues.size(); ++i) {
 
-    Instruction* val = map<Instruction>::get(TmpVMap,entryValues[i].first);
+    Value* val = map<Value>::get(TmpVMap,entryValues[i].first);
     bool loadNow = entryValues[i].second;
 
     std::vector<Value*> indexes;
@@ -359,25 +360,33 @@ void InstrumentLoopUtil::createTmpFct () {
 	new LoadInst(ptr, IMU->makeName('v'), instrHeader);
 
       // The value is an invariant so replace the old val with the loaded val.
-      BasicBlock::iterator valIt(val);
-      ReplaceInstWithValue(val->getParent()->getInstList(),
-			   valIt, invariant);
+      Function::iterator bbIt (instrHeader);      
+      replaceUsesInScope(bbIt, TmpFct->end(), val, invariant); 
     }
     else {
+      // Gotta make sure it's a void* for the calls to yarn_dep
+      Value* castedPtr = 
+	new BitCastInst(ptr, IMU->getVoidPtrType(), IMU->makeName('p'), instrHeader);
+
       // The pointer will be used during instrumentation so remember it.
-      headerValMap[val] = ptr;
+      headerValMap[val] = castedPtr;
     }
   }
   
   // Create a buffer that will be used to load and store the instrumented values.
   Value* bufferVal = 
-    new AllocaInst(IMU->getYarnWordType(), 0, IMU->makeName('b'), instrHeader);
+    new AllocaInst(IMU->getYarnWordType(), 0, IMU->makeName('z'), instrHeader);
+
+  // Gotta make sure it's a void ptr type.
+  Value* castedBufferVal = 
+    new BitCastInst(bufferVal, IMU->getVoidPtrType(), IMU->makeName('b'), instrHeader);
+  
 
   // Add the terminator instruction.
   BranchInst::Create(loopHeader, instrHeader);
 
   // Do the rest of the instrumentation.
-  instrumentTmpBody(poolIdVal, bufferVal, headerValMap);
+  instrumentTmpBody(poolIdVal, castedBufferVal, headerValMap);
   cleanupTmpFct(instrHeader);
   
 }
@@ -413,9 +422,9 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, Value* bufferVal,
 
 	// Call yarn_dep_load to load the desired value into the buffer.
 	// Place before the target instruction.
-	retVal = 
-	  CallInst::Create(IMU->getYarnDepLoadFastFct(), args[0], 
-			   IMU->makeName('r'), pos);
+	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
+				  args.begin(), args.end(), 
+				  IMU->makeName('r'), pos);
 
 	// Load the buffer into a new value.
 	// Place before the target instruction.
@@ -428,8 +437,9 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, Value* bufferVal,
 	
 	// Call yarn_dep_load to load the desired value into the buffer. 
 	//Append at the end of the BB.
-	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), args[0], 
-			 IMU->makeName('r'), pos);
+	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
+				  args.begin(), args.end(),
+				  IMU->makeName('r'), pos);
 
 	// Load the buffer into a new value.
 	//Append at the end of the BB.
@@ -437,9 +447,8 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, Value* bufferVal,
       }
 
       // Replace the old value with the loaded value 
-      BasicBlock::iterator valIt(oldVal);
-      ReplaceInstWithValue(oldVal->getParent()->getInstList(), valIt, newVal);
-
+      Function::iterator bbIt (oldVal->getParent());      
+      replaceUsesInScope(bbIt, TmpFct->end(), oldVal, newVal); 
     }
 
     else if (valueInstr->getType() == InstrStore) {
@@ -462,7 +471,8 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, Value* bufferVal,
 	posIt++;
 
 	// Call yarn to store the buffer into memory.
-	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), args[0],
+	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
+				  args.begin(), args.end(),
 				  IMU->makeName('r'), &(*posIt));
 
 	// Write the value into the buffer and place this instruction before the call.
@@ -475,7 +485,8 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, Value* bufferVal,
 
 	// Call yarn to store the buffer into memory.
 	// Place the call at the beginning of the BB.
-	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), args[0],
+	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
+				  args.begin(), args.end(),
 				  IMU->makeName('r'), &pos->front());
 
 	// Write the value into the buffer and place this instruction before the call.
@@ -505,9 +516,9 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, Value* bufferVal,
       args.push_back(poolIdVal);
       args.push_back(loadInst->getPointerOperand()); // src
       args.push_back(bufferVal); // dest
-      Value* retVal = 
-	CallInst::Create(IMU->getYarnDepLoadFct(), args[0], 
-			 IMU->makeName('r'), loadInst);
+      Value* retVal = CallInst::Create(IMU->getYarnDepLoadFct(), 
+				       args.begin(), args.end(), 
+				       IMU->makeName('r'), loadInst);
       (void) retVal; // \todo do some error checking.
 
       // Load from the buffer which contains the result of the yarn call.
@@ -522,9 +533,9 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, Value* bufferVal,
       args.push_back(poolIdVal);
       args.push_back(bufferVal); // src
       args.push_back(storeInst->getPointerOperand()); // dest
-      Value* retVal = 
-	CallInst::Create(IMU->getYarnDepLoadFct(), args[0], 
-			 IMU->makeName('r'), storeInst);
+      Value* retVal = CallInst::Create(IMU->getYarnDepLoadFct(), 
+				       args.begin(), args.end(), 
+				       IMU->makeName('r'), storeInst);
       (void) retVal; // \todo Do some error checking.
 
       // Store into the buffer which is then used by the yarn call.
@@ -579,7 +590,6 @@ void InstrumentLoopUtil::cleanupTmpFct(BasicBlock* headerBB) {
   }
 
   // remove any succ BBs
-  assert(YL->getLoop()->getExitingBlocks().size() == 1 && "SimplifyLoop again...");
   BasicBlock* exitBlock = map<BasicBlock>::get(TmpVMap, YL->getLoop()->getExitingBlock());
   bb = NULL;
   while (exitBlock != (bb = &TmpFct->back())) {
@@ -614,7 +624,7 @@ void InstrumentLoopUtil::createNewFct() {
   // Replace the pool_id argument with it's placeholder.
   Argument* argPoolId = &(*argIt);
   Instruction* tmpPoolId = dyn_cast<Instruction>(&(*bbIt));
-  ReplaceInstWithValue(NewFct->front().getInstList(), bbIt, argPoolId);
+  tmpPoolId->replaceAllUsesWith(argPoolId);
 
   argIt++;
   bbIt++;
@@ -622,7 +632,7 @@ void InstrumentLoopUtil::createNewFct() {
   // Replace the task  argument with it's placeholder.
   Argument* argTaskPtr = &(*argIt);
   Instruction* tmpTaskPtr = dyn_cast<Instruction>(&(*bbIt));
-  ReplaceInstWithValue(NewFct->front().getInstList(), bbIt, argTaskPtr);
+  tmpTaskPtr->replaceAllUsesWith(argTaskPtr);
 
   // Remove the placeholders
   tmpPoolId->eraseFromParent();
@@ -682,9 +692,10 @@ void InstrumentLoopUtil::instrumentSrcFct() {
   // index_size;
   args.push_back(ConstantInt::get(IMU->getYarnWordType(), 
 				  YL->getValueInstrs().size()));
-  Value* retVal = 
-    CallInst::Create(IMU->getYarnExecSimpleFct(), args[0], 
-		     IMU->makeName('r'), instrHeader);
+
+  Value* retVal = CallInst::Create(IMU->getYarnExecSimpleFct(), 
+				   args.begin(), args.end(), 
+				   IMU->makeName('r'), instrHeader);
 
   // Load the results of the call.
   for (size_t i = 0; i < valuePtrList.size(); ++i) {
