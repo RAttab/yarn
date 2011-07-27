@@ -79,6 +79,12 @@ namespace yarn {
 /// Contains the dependency defined by the loops' phi nodes.
 ///
   class LoopValue : public Noncopyable {
+
+  public:
+    
+    typedef std::vector<llvm::Value*> ValueList;
+    
+  private:
     
     // Node that defines the Entry and Exiting Value
     llvm::PHINode* HeaderNode;
@@ -88,12 +94,17 @@ namespace yarn {
     // Value of the dependency before the loop.
     llvm::Value* EntryValue;
 
-    llvm::Value* ExitingValue;
+    ValueList ExitingValues;
+
+    // Value used for each iteration.
+    // Not necessarily an exiting value (eg. an induction variable not used outside).
+    llvm::Value* IterationValue;
 
   public:
     
     LoopValue () :
-      HeaderNode(NULL), FooterNode(NULL), EntryValue(NULL), ExitingValue(NULL)
+      HeaderNode(NULL), FooterNode(NULL), 
+      EntryValue(NULL), ExitingValues(), IterationValue(NULL)
     {}
 
     /// The phi node in the loop header used to determine what the 
@@ -110,7 +121,16 @@ namespace yarn {
     /// Null if the value isn't used after the loop.
     inline llvm::Value* getExitValue () const { return FooterNode; }
 
-    inline llvm::Value* getExitingValue() const { return ExitingValue; }
+    inline const ValueList& getExitingValues () const { return ExitingValues; }
+    inline llvm::Value* getExitingValue () const { 
+      assert(ExitingValues.size() == 1);
+      return ExitingValues[0];
+    }
+
+    inline llvm::Value* getStartIterationValue () const {return HeaderNode; }
+    inline llvm::Value* getEndIterationValue () const {return IterationValue; }
+
+    inline bool isExitOnly() const { return EntryValue == NULL; }
 
     /// Debug.  
     inline void print (llvm::raw_ostream &OS) const;
@@ -192,6 +212,36 @@ namespace yarn {
   };
 
 
+
+//===----------------------------------------------------------------------===//
+/// Contains info about a loop that needs to be instrumented. 
+  class ArrayEntry : public Noncopyable {
+    
+    llvm::Value* EntryValue;
+    llvm::PHINode* ExitNode;
+    bool IsInvariant;
+
+    llvm::Value* Pointer;
+    llvm::Value* NewValue;
+
+  public :
+
+    ArrayEntry(llvm::Value* EV, llvm::PHINode* EN, bool I):
+      EntryValue(EV), ExitNode(EN), IsInvariant(I), Pointer(NULL)
+    {}
+
+    inline llvm::Value* getEntryValue() const { return EntryValue; }
+    inline llvm::PHINode* getExitNode() const { return ExitNode; }
+    inline bool getIsInvariant() const { return IsInvariant; }
+
+    inline void setPointer (llvm::Value* P) { Pointer = P; }
+    inline llvm::Value* getPointer() const { return Pointer; }
+
+    inline void setNewValue (llvm::Value* NV) { NewValue = NV; }
+    inline llvm::Value* getNewValue() const { return NewValue; }
+
+  };
+
   
 
 
@@ -208,10 +258,7 @@ namespace yarn {
     typedef std::vector<PointerInstr*> PointerInstrList;
     typedef std::vector<ValueInstr*> ValueInstrList;
 
-    // A true value indicates that it should be loaded right-away.
-    // while false indicates that it should be loaded as needed with yarn_load/store.
-    typedef std::pair<llvm::Value*, bool> EntryValueTuple;
-    typedef std::vector<EntryValueTuple> EntryValueList;
+    typedef std::vector<ArrayEntry*> ArrayEntryList;
 
   private:
 
@@ -240,7 +287,7 @@ namespace yarn {
     ValueInstrList ValueInstrs;
 
     /// List of all the values that need to be passed to the speculative function.
-    EntryValueList EntryValues;
+    ArrayEntryList ArrayEntries;
 
   public:
     
@@ -277,7 +324,9 @@ namespace yarn {
 
     /// List of all the values that need to be passed to the speculative function.
     /// If the tuple contains a true value then it should be loaded in the header.
-    inline const EntryValueList& getEntryValues () const { return EntryValues; }
+    inline ArrayEntryList& getArrayEntries () { return ArrayEntries; }
+    
+    inline ArrayEntry* getArrayEntry(unsigned I) { return ArrayEntries[I]; }
 
     
     /// Debug.  
@@ -301,12 +350,11 @@ namespace yarn {
     // Called for anything else that has operands and fills in Invariants.
     void processInvariants (llvm::Instruction* I);
 
+    void processArrayEntries ();
     /// Finds the instrumentation points for all the pointer dependencies.
-    void processPointerInstrs ();
+    void processPointerInstrs (LoopPointer* LP);
     /// Finds the instrumentation points for all the value dependencies.
-    void processValueInstrs ();
-
-    void processEntryValues ();
+    void processValueInstrs (LoopValue* LV, unsigned Index);
 
 
 

@@ -70,7 +70,7 @@ YarnLoop::YarnLoop(Function* f,
 :
   LI(li), AA(aa), DT(dt), PDT(pdt),
   F(f), L(l), Dependencies(), Pointers(), Invariants(),
-  PointerInstrs(), ValueInstrs(), EntryValues()
+  PointerInstrs(), ValueInstrs(), ArrayEntries()
 {
   processLoop();
 }
@@ -78,6 +78,9 @@ YarnLoop::YarnLoop(Function* f,
 YarnLoop::~YarnLoop() {
   VectorUtil<LoopValue>::free(Dependencies);
   VectorUtil<LoopPointer>::free(Pointers);
+  VectorUtil<PointerInstr>::free(PointerInstrs);
+  VectorUtil<ValueInstr>::free(ValueInstrs);
+  VectorUtil<ArrayEntry>::free(ArrayEntries);
 }
 
 
@@ -145,19 +148,17 @@ void YarnLoop::processLoop () {
       processFooterPHINode(phi, exitingValueMap);
     }
   }
-    
-
-  processValueInstrs();
-  processPointerInstrs();
-
-  processEntryValues();
+  
+  processArrayEntries();
 
 }
 
 // The SimplifyLoop pass ensures that we have only one back-edge in the loop and only
 // one incomming edge into the loop. This means that the header of the loop will contain
-// PHI nodes with all the dependencies used before the loop. We can also use the PHI
-// nodes to get the exiting values which can later be used by the processFooterPHINode.
+// PHI nodes with all the dependencies used before the loop. We also reccord any
+// exiting values associated with these so that they can later be used by 
+// processFooterPHINode. Note that the exiting values here might be incomplete so we have
+// to wait.
 void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
   BasicBlock* loopPred = L->getLoopPredecessor();
 
@@ -172,38 +173,43 @@ void YarnLoop::processHeaderPHINode (PHINode* PHI, ValueMap& ExitingValueMap) {
       lv->EntryValue = incValue;
     }
     else {
-      lv->ExitingValue = incValue;
+      lv->IterationValue = incValue;
     }
   }
 
-  assert((lv->EntryValue != NULL && lv->ExitingValue != NULL) &&
+  assert((lv->EntryValue != NULL && lv->IterationValue != NULL) &&
 	 "SimplifyLoop should ensure only one exiting and one entry value.");
 
   Dependencies.push_back(lv);
-  ExitingValueMap[lv->ExitingValue] = lv;
+  ExitingValueMap[lv->IterationValue] = lv;
 
 }
 
 // The LCSSA and the SimplifyLoop pass ensures that we have a unique footer for the loop
 // which contains PHI nodes of dependencies that are used after the loop.
-// This functions looks at these and, if possible, matches them to the values found in
-// processHeaderPHINode.
+// This functions looks at these to find the exit value and the exiting values for a 
+// LoopValue.
 void YarnLoop::processFooterPHINode(PHINode* PHI, ValueMap& ExitingValueMap) {
 
-  LoopValue* lv;
-  
-  int bbIndex = PHI->getBasicBlockIndex(L->getLoopLatch());
-  if (bbIndex < 0) {
-    return;
-  }
-  Value* incValue = PHI->getIncomingValue(bbIndex);
+  LoopValue* lv = NULL;
+  LoopValue::ValueList exitingValList;
+
+  for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
+    if (!isInLoop(L, PHI->getIncomingBlock(i))) {
+      continue;
+    }
+
+    Value* exitingValue = PHI->getIncomingValue(i);
+    exitingValList.push_back(exitingValue);
     
-  // Do we already know the value from the header?
-  ValueMap::iterator it = ExitingValueMap.find(incValue);
-  if (it != ExitingValueMap.end()) {
-    lv = it->second;
+    // Do we already know the value from the header?
+    ValueMap::iterator it = ExitingValueMap.find(exitingValue);
+    if (it != ExitingValueMap.end()) {
+      assert(!lv && "Can't belong to two LoopValues.");
+      lv = it->second;
+    }
   }
-  
+
   // If we didn't match anything from the header then 
   // this is a new exit-only value.
   if (!lv) {
@@ -212,8 +218,11 @@ void YarnLoop::processFooterPHINode(PHINode* PHI, ValueMap& ExitingValueMap) {
   }
 
   assert(lv->FooterNode == NULL &&
-	 "SimplifyLoop should ensure only one exit value.");
-  lv->FooterNode = PHI;  
+	 "LCSSA should ensure only one exit value.");
+  lv->FooterNode = PHI;
+  lv->ExitingValues.insert(lv->ExitingValues.end(), 
+			   exitingValList.begin(), 
+			   exitingValList.end());
 }
 
 
@@ -310,39 +319,47 @@ void YarnLoop::processInvariants (Instruction* Inst) {
 }
 
 
-void YarnLoop::processEntryValues () {
+void YarnLoop::processArrayEntries () {
+
+  errs() << "processEntryValues::Dependencies:\n";
+
+  unsigned Index = 0;
   for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
        it != itEnd; ++it)
   {
-    EntryValues.push_back(std::make_pair((*it)->getEntryValue(), false));
+    LoopValue* lv = *it;
+
+    ArrayEntry* ae = new ArrayEntry(lv->getEntryValue(), lv->getFooterNode(), false);
+    ArrayEntries.push_back(ae);
+    processValueInstrs(lv, Index);
+    Index++;
   }
 
   for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end(); 
        it != itEnd; ++it)
   {
+    LoopPointer* lp = *it;
+
     typedef LoopPointer::AliasList AliasList;
-    AliasList& aliases = (*it)->getAliasList();
+    AliasList& aliases = lp->getAliasList();
     for (AliasList::iterator aliasIt = aliases.begin(), aliasEndIt = aliases.end();
 	 aliasIt != aliasEndIt; ++aliasIt)
     {
       Value* alias = *aliasIt;
-      bool outsideLoop = false;
-      if (isa<Argument>(alias)) {
-	outsideLoop = true;
-      }
-      else if(Instruction* inst = dyn_cast<Instruction>(alias)) {
-	outsideLoop = L->contains(inst->getParent());
-      }
-      if (outsideLoop) {
-	EntryValues.push_back(std::make_pair(alias, true));
+      if (!isInLoop(L, alias)) {
+	ArrayEntry* ae = new ArrayEntry(alias, NULL, true);
+	ArrayEntries.push_back(ae);
       }
     }
+
+    processPointerInstrs(lp);
   }
 
   for (InvariantList::iterator it = Invariants.begin(), itEnd = Invariants.end();
        it != itEnd; ++it) 
   {
-    EntryValues.push_back(std::make_pair(*it, true));
+    ArrayEntry* ae = new ArrayEntry(*it, NULL, true);
+    ArrayEntries.push_back(ae);
   }
   
 }
@@ -495,61 +512,51 @@ YarnLoop::BBPosList YarnLoop::findStorePos (Value* V) const {
 
 
 // Ugliest for loops EVAR...
-void YarnLoop::processPointerInstrs () {
+void YarnLoop::processPointerInstrs (LoopPointer* lp) {
   typedef LoopPointer::AliasList AliasList;
 
-  for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end();
-       it != itEnd; ++it)
+  AliasList& aliasList = lp->getAliasList();
+  for (AliasList::iterator aliasIt = aliasList.begin(), aliasEndIt = aliasList.end();
+       aliasIt != aliasEndIt; ++aliasIt)
   {
 
-    AliasList& aliasList = (*it)->getAliasList();
-    for (AliasList::iterator aliasIt = aliasList.begin(), 
-	   aliasEndIt = aliasList.end();
-	 aliasIt != aliasEndIt; ++aliasIt)
+    Value* alias = *aliasIt;
+    for (Value::use_iterator useIt =  alias->use_begin(), useEndIt = alias->use_end();
+	 useIt != useEndIt; ++useIt)
     {
+      User* user = *useIt;
+      // Make sure we're still in the loop.
+      if (!isInLoop(L, user)) {
+	continue;
+      }
 
-      Value* alias = *aliasIt;
-      for (Value::use_iterator useIt =  alias->use_begin(), 
-	     useEndIt = alias->use_end();
-	   useIt != useEndIt; ++useIt)
-      {
-	User* user = *useIt;
-	// Make sure we're still in the loop.
-	if (!isInLoop(L, user)) {
-	  continue;
-	}
+      PointerInstr* pip = NULL;
 
-	PointerInstr* pip = NULL;
-
-	if (StoreInst* si = dyn_cast<StoreInst>(user)) {
-	  pip = new PointerInstr(InstrStore, si);
-	}
-	else if (LoadInst* li = dyn_cast<LoadInst>(user)) {
-	  pip = new PointerInstr(InstrLoad, li);
-	}
-	else {
-	  continue;
-	}
+      if (StoreInst* si = dyn_cast<StoreInst>(user)) {
+	pip = new PointerInstr(InstrStore, si);
+      }
+      else if (LoadInst* li = dyn_cast<LoadInst>(user)) {
+	pip = new PointerInstr(InstrLoad, li);
+      }
+      else {
+	continue;
+      }
 	
-	PointerInstrs.push_back(pip);
+      PointerInstrs.push_back(pip);
 
-      } // use iteration
-    } // alias iteration
-  } // pointer interation
-
+    } // use iteration
+  } // alias iteration
 }
+ 
 
-void YarnLoop::processValueInstrs () {
+ void YarnLoop::processValueInstrs (LoopValue* lv, unsigned index) {
 
-  unsigned index = 0;
+  if (!lv->isExitOnly()) {
 
-  for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
-       it != itEnd; ++it)
-  {
-    // Process the loads.
+    // Load of the iteration values.
     {
-      Value* loadVal = (*it)->getEntryValue();
-      BBPosList posList = findLoadPos(loadVal);
+      Value* startItVal = lv->getStartIterationValue();
+      BBPosList posList = findLoadPos(startItVal);
       assert(posList.size() == 1 &&
 	     "We don't yet support multiple load points"
 	     " and there should be at least one load point.");
@@ -557,29 +564,43 @@ void YarnLoop::processValueInstrs () {
       for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
 	   posIt != posEndIt; ++posIt)
       {
-	ValueInstr* vip = new ValueInstr(InstrLoad, loadVal, *posIt, index);
+	ValueInstr* vip = new ValueInstr(InstrLoad, startItVal, *posIt, index);
 	ValueInstrs.push_back(vip);
       }
     }
 
-    // Process the stores.
+    // Store of the iteration values.
     {
-      Value* writeVal = (*it)->getExitingValue();
-      BBPosList posList = findStorePos(writeVal);
-      assert(posList.size() > 0 &&
-	     "There should be at least one store point.");
+      Value* endItVal = lv->getEndIterationValue();
+      BBPosList posList = findStorePos(endItVal);
 
       for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
 	   posIt != posEndIt; ++posIt)
       {
-	ValueInstr* vip = new ValueInstr(InstrStore, writeVal, *posIt, index);
+	ValueInstr* vip = new ValueInstr(InstrStore, endItVal, *posIt, index);
 	ValueInstrs.push_back(vip);
-      }
+      }      
     }
-
-    index++;
-
+    
   }
+
+  // Store of the exiting values.
+  typedef LoopValue::ValueList VL;
+  const VL& exitingValues = lv->getExitingValues();
+  for (VL::const_iterator it = exitingValues.begin(), itEnd = exitingValues.end();
+       it != itEnd; ++it) 
+  {
+    Value* exitingVal = *it;
+    BBPosList posList = findStorePos(exitingVal);
+    
+    for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
+	 posIt != posEndIt; ++posIt)
+    {
+      ValueInstr* vip = new ValueInstr(InstrStore, exitingVal, *posIt, index);
+      ValueInstrs.push_back(vip);
+    }
+  }
+
 }    
 
 

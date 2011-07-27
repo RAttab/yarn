@@ -19,25 +19,28 @@
 
 
 #include <stdio.h>
+#include <stdint.h>
 
-int f (int a, int* b, int c) {
+typedef uint_fast32_t word_t;
+
+word_t f (word_t a, word_t* b, word_t c) {
   c = 10; 
   *b = a + *b + c;
   return 1;
 }
 
-int* ret_ptr (int a) {
+word_t* ret_ptr (word_t a) {
   return &a;
 }
 
-void loop_simple (int a, int* b) {
-  for (int i = 0; i < a; ++i) {
+void loop_simple (word_t a, word_t* b) {
+  for (word_t i = 0; i < a; ++i) {
     *b += *b % 2 ? 5 : 7;
   }
 }
 
-void loop_break (int a, int* b) {
-  for (int i = 0; i < a; ++i) {
+void loop_break (word_t a, word_t* b) {
+  for (word_t i = 0; i < a; ++i) {
     if (*b % 10) continue;
     if (*b % 11) break;
     *b += a;
@@ -47,12 +50,12 @@ void loop_break (int a, int* b) {
 }
 
 struct task {
-  int* i;
-  int* a;
-  int* b;
+  word_t* i;
+  word_t* a;
+  word_t* b;
 };
 
-int inst_loop (void* p) {
+word_t inst_loop (void* p) {
   struct task* t = (struct task*) p;
   
   if (*t->i < *t->a) {
@@ -71,13 +74,13 @@ int inst_loop (void* p) {
 
 int main (int argc, char** argv) {
   
-  int a = 1;
-  int b = 2;
-  int* c = &b;
+  word_t a = 1;
+  word_t b = 2;
+  word_t* c = &b;
 
-  int d = f(a,c, 10);
+  word_t d = f(a,c, 10);
 
-  int* e = ret_ptr(a);
+  word_t* e = ret_ptr(a);
 
   printf("a=%d, b=%d, c=%p", a, b, c);
   

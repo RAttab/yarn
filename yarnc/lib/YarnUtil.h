@@ -14,9 +14,11 @@
 #ifndef YARN_UTIL_H
 #define YARN_UTIL_H
 
-#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Instruction.h>
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Support/raw_ostream.h>
 #include <vector>
+#include <stack>
 
 namespace yarn {
 
@@ -86,13 +88,52 @@ namespace yarn {
   }
 
   inline void replaceUsesInScope(llvm::Function::iterator bb,
-				 llvm::Function::iterator bbEnd,
+				 const llvm::Function::iterator& bbEnd,
 				 llvm::Value* from,
 				 llvm::Value* to)
   {
     for (; bb != bbEnd; ++bb) {
       replaceUsesInBlock(&(*bb), from, to);
     }
+  }
+
+  inline void eraseInstructions(llvm::BasicBlock* BB) {
+    llvm::BasicBlock::InstListType& instList = BB->getInstList();
+    
+    while (!instList.empty()) {
+      instList.back().eraseFromParent();
+    }
+  }
+
+  inline void pruneFunction(llvm::Function* F, 
+			    llvm::BasicBlock* keepStart,
+			    llvm::BasicBlock* keepEnd) 
+  {
+    typedef llvm::Function::iterator iterator;
+    llvm::Function::BasicBlockListType& bbList = F->getBasicBlockList();
+
+    // Remove all the instructions in reverse to safely clear all use dependencies.
+    for (iterator it = bbList.end(), itEnd (keepEnd); it != itEnd;) {
+      --it;
+      eraseInstructions(&(*it));
+    }
+    for (iterator it (keepStart), itEnd = bbList.begin(); it != itEnd;) {
+      --it;
+      eraseInstructions(&(*it));
+    }
+
+    llvm::errs() << "\n\n\n";
+    F->print(llvm::errs());
+    llvm::errs() << "\n\n\n";
+
+    // Delete the basic blocks working forward (all use dependencies were cleared up).
+    for (iterator it = bbList.begin(), itEnd (keepStart); it != itEnd; ++it) {
+      it->eraseFromParent();
+    }
+    for (iterator it (keepEnd), itEnd = bbList.end(); it != itEnd; ++it) {
+      it->eraseFromParent();
+    }
+      
   }
 
 } // namespace yarn
