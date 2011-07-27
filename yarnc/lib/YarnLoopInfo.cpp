@@ -43,10 +43,28 @@ STATISTIC(LoopPointers, "Dependency pointers found in loop.");
 STATISTIC(LoopInvariants, "Invariants found in loop.");
 
 
+#define PRINT_VAL(OS, LVL, VAL)				\
+  do {							\
+    if (!VAL) break;					\
+    OS << LVL << (#VAL) << " = ";			\
+    (VAL)->print(OS);					\
+    OS << " --- ";					\
+    (VAL)->getType()->print(OS);			\
+    OS << "\n";						\
+  } while(false);
+
 //===----------------------------------------------------------------------===//
 /// LoopPointer
 
 void LoopPointer::print (raw_ostream &OS) const {
+  std::string LVL = "\t\t";
+  const std::string LVL2 = "\t\t\t";
+  OS << LVL << "LoopPointer - Aliasses:\n";
+  
+  for (size_t i = 0; i < Aliases.size(); ++i) {
+    PRINT_VAL(OS, LVL2, Aliases[i]);
+  }
+  
 }
 
 
@@ -54,7 +72,67 @@ void LoopPointer::print (raw_ostream &OS) const {
 /// LoopValue
 
 void LoopValue::print (raw_ostream &OS) const {
+  const std::string LVL = "\t\t";
+  const std::string LVL2 = "\t\t\t";
+  const std::string LVL3 = "\t\t\t\t";
+
+  OS << LVL << "LoopValue:\n";
+  
+  PRINT_VAL(OS, LVL2, HeaderNode);
+  PRINT_VAL(OS, LVL2, FooterNode);
+  PRINT_VAL(OS, LVL2, EntryValue);
+  PRINT_VAL(OS, LVL2, IterationValue);
+
+  OS << LVL2 << "ExitingValues:\n";
+  for (size_t i = 0; i < ExitingValues.size(); ++i) {
+    PRINT_VAL(OS, LVL3, ExitingValues[i]);
+  }
+
 }
+
+//===----------------------------------------------------------------------===//
+/// PointerInstr
+
+void PointerInstr::print (raw_ostream &OS) const {
+  const std::string LVL = "\t\t";
+  const std::string LVL2 = "\t\t\t";
+
+  OS << LVL << "PointerInstr:\n";
+  
+  OS << LVL2 << "Type = " << (Type == InstrLoad ? "Load" : "Store") << "\n";
+  PRINT_VAL(OS, LVL2, I);
+}
+
+//===----------------------------------------------------------------------===//
+/// ValueInstr
+
+void ValueInstr::print (raw_ostream &OS) const {
+  const std::string LVL = "\t\t";
+  const std::string LVL2 = "\t\t\t";
+
+  OS << LVL << "ValueInstr:\n";
+
+  OS << LVL2 << "Type = " << (Type == InstrLoad ? "Load" : "Store") << "\n";
+  PRINT_VAL(OS, LVL2, V);
+  PRINT_VAL(OS, LVL2, Pos);
+}
+
+//===----------------------------------------------------------------------===//
+/// ArrayEntry
+
+void ArrayEntry::print (raw_ostream &OS) const {
+  const std::string LVL = "\t\t";
+  const std::string LVL2 = "\t\t\t";
+
+  OS << LVL << "ArrayEntry:\n";
+  
+  PRINT_VAL(OS, LVL2, EntryValue);
+  PRINT_VAL(OS, LVL2, ExitNode);
+  OS << LVL2 << "IsInvariant = " << IsInvariant << "\n";
+  PRINT_VAL(OS, LVL2, Pointer);
+  PRINT_VAL(OS, LVL2, NewValue);
+}
+
 
 
 
@@ -297,7 +375,7 @@ void YarnLoop::processPointers (PointerInstSet& LoadSet, PointerInstSet& StoreSe
 
     // We only read the pointer so check if we're an invariant.
     if (L->isLoopInvariant(*it)) {
-      Invariants.push_back(*it);
+      Invariants.insert(*it);
     }
     
   }  
@@ -311,9 +389,16 @@ void YarnLoop::processInvariants (Instruction* Inst) {
 
   for (unsigned int i = 0, iEnd = Inst->getNumOperands(); i < iEnd; ++i) {
     Value* operand = Inst->getOperand(i);
-    if (L->isLoopInvariant(operand)) {
-      Invariants.push_back(operand);
+    if (!isa<Instruction>(operand) && 
+	!isa<Argument>(operand) && 
+	!isa<Operator>(operand)) 
+    {
+      continue;
     }
+    if (!L->isLoopInvariant(operand)) {
+      continue;
+    }
+    Invariants.insert(operand);
   }
 
 }
@@ -605,7 +690,29 @@ void YarnLoop::processPointerInstrs (LoopPointer* lp) {
 
 
 void YarnLoop::print (raw_ostream &OS) const {
+  const std::string LVL = "\t";
+  const std::string LVL2 = "\t\t";
+  const std::string LVL3 = "\t\t\t";
 
+
+  OS << LVL << "YarnLoop(" << F->getName() << "):\n";
+
+  for (unsigned i = 0; i < Dependencies.size(); ++i)
+    Dependencies[i]->print(OS);
+  for (unsigned i = 0; i < Pointers.size(); ++i)
+    Pointers[i]->print(OS);
+
+  OS << LVL2 << "Invariants:\n";
+  for (InvariantList::iterator it = Invariants.begin(), itEnd = Invariants.end();
+       it != itEnd; ++it)
+    PRINT_VAL(OS, LVL3, *it);
+
+  for (unsigned i = 0; i < PointerInstrs.size(); ++i) 
+    PointerInstrs[i]->print(OS);
+  for (unsigned i = 0; i < ValueInstrs.size(); ++i) 
+    ValueInstrs[i]->print(OS);
+  for (unsigned i = 0; i < ArrayEntries.size(); ++i) 
+    ArrayEntries[i]->print(OS);
 }
 
 
@@ -641,9 +748,6 @@ void YarnLoopInfo::getAnalysisUsage (AnalysisUsage &AU) const {
 
 bool YarnLoopInfo::runOnFunction (Function& F) {
 
-  errs() << "START YarnLoopInfo::runOnFunction(F=" << F.getName() <<")\n";
-
-
   LI = &getAnalysis<LoopInfo>();
   AA = &getAnalysis<AliasAnalysis>();
   DominatorTree* dt = &getAnalysis<DominatorTree>();
@@ -667,13 +771,14 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
       LoopPointers += yLoop->getPointers().size();
       LoopInvariants += yLoop->getInvariants().size();
       
+      F.print(errs());
+      yLoop->print(errs());
+      
     }
     else {
       delete yLoop;
     }      
   }
-
-  errs() << "END   YarnLoopInfo::runOnFunction(F=" << F.getName() <<")\n";
 
   return false;
 }
@@ -732,6 +837,10 @@ void YarnLoopInfo::releaseMemory () {
 
 
 void YarnLoopInfo::print (raw_ostream &O, const Module *M) const {
+  O << "YarnLoopInfo (" << Loops.size() << "):\n";
+  for (size_t i = 0; i < Loops.size(); ++i) {
+    Loops[i]->print(O);
+  }
 }
 
 

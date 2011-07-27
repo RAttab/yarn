@@ -601,14 +601,14 @@ void InstrumentLoopUtil::cleanupTmpFct(BasicBlock* headerBB) {
 		       latch);
   }  
 
-  BasicBlock* exitBlock =  
-    map<BasicBlock>::get(TmpVMap, YL->getLoop()->getUniqueExitBlock());
-
-  errs() << "\n\n\n";
-  TmpFct->print(errs());
-  errs() << "\n\n\n";
+  // Delete header phi nodes
+  BasicBlock* headerBlock = map<BasicBlock>::get(TmpVMap, l->getHeader());
+  while (PHINode* phi = dyn_cast<PHINode>(&headerBlock->front())) {
+    phi->eraseFromParent();
+  }
 
   // Remove all the excess BB.
+  BasicBlock* exitBlock = map<BasicBlock>::get(TmpVMap, l->getUniqueExitBlock());
   pruneFunction(TmpFct, headerBB, exitBlock);
 }
 
@@ -675,7 +675,6 @@ void InstrumentLoopUtil::instrumentSrcFct() {
 
   for (unsigned i = 0; i < arrayEntries.size(); ++i) {
     ArrayEntry* ae = arrayEntries[i];
-    Value* entryValue = ae->getEntryValue();
 
     std::vector<Value*> indexes;
     indexes.push_back(ConstantInt::get(Type::getInt32Ty(IMU->getContext()), 0));
@@ -688,7 +687,10 @@ void InstrumentLoopUtil::instrumentSrcFct() {
 				IMU->makeName('p'), instrHeader);
 
     // Store the current value into the structure.
-    new StoreInst(entryValue, ptr, instrHeader);
+    Value* entryValue = ae->getEntryValue();
+    if(entryValue) {
+      new StoreInst(entryValue, ptr, instrHeader);
+    }
 
     if (!ae->getIsInvariant()) {
       ae->setPointer(ptr);
@@ -701,7 +703,7 @@ void InstrumentLoopUtil::instrumentSrcFct() {
 
   // call yarn_exec_simple
   std::vector<Value*> args;
-  args.push_back(TmpFct); // executor
+  args.push_back(NewFct); // executor
   args.push_back(arrayVoidPtr); // ddata
   // threadCount - default value.
   args.push_back(ConstantInt::get(IMU->getYarnWordType(), 0));
@@ -734,8 +736,11 @@ void InstrumentLoopUtil::instrumentSrcFct() {
     if (lv) {
       // Update the entry phi node so that it takes our newly loaded value.
       PHINode* phi = lv->getHeaderNode();
-      phi->removeIncomingValue(oldPred, false);
-      phi->addIncoming(newVal, instrHeader);
+      int idx = phi->getBasicBlockIndex(oldPred);
+      if (idx >= 0) {
+	phi->removeIncomingValue(idx, false);
+	phi->addIncoming(newVal, instrHeader);
+      }
     }
   }  
   

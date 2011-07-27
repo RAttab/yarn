@@ -64,7 +64,7 @@ namespace yarn {
 
 
     /// Debug.  
-    inline void print (llvm::raw_ostream &OS) const;
+    void print (llvm::raw_ostream &OS) const;
 
 
   private:
@@ -133,7 +133,7 @@ namespace yarn {
     inline bool isExitOnly() const { return EntryValue == NULL; }
 
     /// Debug.  
-    inline void print (llvm::raw_ostream &OS) const;
+    void print (llvm::raw_ostream &OS) const;
 
   private :
     
@@ -167,6 +167,9 @@ namespace yarn {
     inline InstrType getType () const { return Type; }
     /// Returns the instruction to instrument.
     inline llvm::Instruction* getInstruction () const { return I; }
+
+    /// Debug.  
+    void print (llvm::raw_ostream &OS) const;
 
   };
 
@@ -208,6 +211,9 @@ namespace yarn {
 
     /// Index for calls to yarn_dep_xxx_fast
     inline unsigned getIndex () const { return Index; }
+
+    /// Debug.  
+    void print (llvm::raw_ostream &OS) const;
     
   };
 
@@ -240,6 +246,9 @@ namespace yarn {
     inline void setNewValue (llvm::Value* NV) { NewValue = NV; }
     inline llvm::Value* getNewValue() const { return NewValue; }
 
+    /// Debug.  
+    void print (llvm::raw_ostream &OS) const;
+
   };
 
   
@@ -253,7 +262,7 @@ namespace yarn {
 
     typedef std::vector<LoopValue*> ValueList;
     typedef std::vector<LoopPointer*> PointerList; 
-    typedef std::vector<llvm::Value*> InvariantList;
+    typedef std::set<llvm::Value*> InvariantList;
    
     typedef std::vector<PointerInstr*> PointerInstrList;
     typedef std::vector<ValueInstr*> ValueInstrList;

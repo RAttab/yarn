@@ -127,13 +127,14 @@ namespace yarn {
     llvm::errs() << "\n\n\n";
 
     // Delete the basic blocks working forward (all use dependencies were cleared up).
-    for (iterator it = bbList.begin(), itEnd (keepStart); it != itEnd; ++it) {
-      it->eraseFromParent();
+    llvm::BasicBlock* bb;
+    while ((bb = &bbList.front()) != keepStart) {
+      bb->eraseFromParent();
     }
-    for (iterator it (keepEnd), itEnd = bbList.end(); it != itEnd; ++it) {
-      it->eraseFromParent();
+    while ((bb = &bbList.back()) != keepEnd) {
+      bb->eraseFromParent();
     }
-      
+    keepEnd->eraseFromParent();
   }
 
 } // namespace yarn
