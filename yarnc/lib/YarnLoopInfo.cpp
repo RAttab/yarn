@@ -452,16 +452,17 @@ void YarnLoop::processArrayEntries () {
 
 
 namespace {
-  
-  class BBInstPredicate : public std::unary_function<bool, Instruction&> {
 
-    Instruction* ToFind;
+  template<typename T>
+  class FindValuePredicate : public std::unary_function<bool, T*> {
+
+    T* ToFind;
 
   public :
 
-    BBInstPredicate (Instruction* toFind) : ToFind(toFind) {}
-    bool operator() (const Instruction& inst) {
-      return &inst == ToFind;
+    FindValuePredicate (T* toFind) : ToFind(toFind) {}
+    bool operator() (const T* user) {
+      return ToFind == user;
     }
 
   };
@@ -500,22 +501,18 @@ YarnLoop::BBPosList YarnLoop::findLoadPos (Value* V) const {
   //    return the pos right before it.
   // otherwise return the last position in the BB.
   BBPosList posList;
-  for (Value::use_iterator it = V->use_begin(), endIt = V->use_end();
-       it != endIt; ++it)
+  for (BasicBlock::iterator it = loadBB->begin(), itEnd = loadBB->end();
+       it != itEnd; ++it)
   {
-    Instruction* inst = dyn_cast<Instruction>(*it);
-    assert(inst && "Sanity check.");
-    if (!isInLoop(L, inst)) {
-      continue;
-    }
+    Instruction* inst = &(*it);
 
-    BBInstPredicate pred(inst);
-    BasicBlock::iterator findIt = std::find_if(loadBB->begin(), loadBB->end(), pred);
-    if (findIt != loadBB->end()) {
-      posList.push_back(&(*findIt));
+    FindValuePredicate<User> pred(inst);
+    Value::use_iterator findIt = std::find_if(V->use_begin(), V->use_end(), pred);
+    if (findIt != V->use_end()) {
+      posList.push_back(inst);
       return posList;
     }
-  }  
+  }
 
   posList.push_back(loadBB);
   return posList;
@@ -574,21 +571,25 @@ YarnLoop::BBPosList YarnLoop::findStorePos (Value* V) const {
 	   "LoopSimplify ensures that there's always a common dominator.");
   }
 
-  // If the common dominator contains a load instruction, 
+  // If the common dominator contains a store instruction, 
   //    return the pos right after it.
   // otherwise return the first valid position in the BB.
   BBPosList posList;
-  for (InstructionList::iterator it = storeList.begin(), endIt = storeList.end();
-       it != endIt; ++it)
-  {
-    BBInstPredicate pred(*it);
-    BasicBlock::iterator findIt = std::find_if(storeBB->begin(), storeBB->end(), pred);
-    if (findIt != storeBB->end()) {
-      posList.push_back(&(*findIt));
+  BasicBlock::iterator it = storeBB->end();
+  do {
+    it--;
+    
+    Instruction* inst = &(*it);
+
+    FindValuePredicate<Instruction> pred(inst);
+    InstructionList::iterator findIt = 
+      std::find_if(storeList.begin(), storeList.end(), pred);
+
+    if (findIt != storeList.end()) {
+      posList.push_back(inst);
       return posList;
     }
-    
-  }  
+  } while (it != storeBB->begin());
 
   posList.push_back(storeBB);
   return posList;

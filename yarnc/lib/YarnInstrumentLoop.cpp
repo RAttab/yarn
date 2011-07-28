@@ -285,7 +285,7 @@ void InstrumentModuleUtil::createDeclarations () {
     std::vector<const Type*> args;
     args.push_back(YarnWordTy); // yarn_word_t pool_id
     args.push_back(VoidPtrTy);  // void* data
-    YarnExecutorFctTy = FunctionType::get(YarnWordTy, args, false); // enum yarn_ret
+    YarnExecutorFctTy = FunctionType::get(EnumTy, args, false); // enum yarn_ret
     M->addTypeName("yarn_executor_t", YarnExecutorFctTy);
   }
 
@@ -359,6 +359,9 @@ void InstrumentLoopUtil::instrumentLoop() {
   // Add the call to the speculative function.
   // These will trash our analysis data. Do them last.
   instrumentSrcFct();
+
+  //TmpFct is no longer needed. get rid of it.
+  delete TmpFct;
 
 }
 
@@ -760,11 +763,11 @@ void InstrumentLoopUtil::createNewFct() {
 void InstrumentLoopUtil::instrumentSrcFct() {
   // create new header BB
   BasicBlock* loopHeader = YL->getLoop()->getHeader();
-  BasicBlock* loopExit = YL->getLoop()->getExitBlock();
+  BasicBlock* loopExit = YL->getLoop()->getUniqueExitBlock();
   BasicBlock* oldPred = YL->getLoop()->getLoopPredecessor();
 
   BasicBlock* instrHeader = 
-    BasicBlock::Create(IMU->getContext(), IMU->makeName('b'), NewFct, loopHeader);
+    BasicBlock::Create(IMU->getContext(), IMU->makeName('b'), SrcFct, loopHeader);
 
   // Create a new array for all the value used by the speculative sys.
   Value* arrayPtr = 
@@ -859,7 +862,7 @@ void InstrumentLoopUtil::instrumentSrcFct() {
 
   // Goto to the end of the loop if we were successfull 
   // otherwise execute the loop with our partially calculated values.
-  BranchInst::Create(loopHeader, loopExit, comp, instrHeader);
+  BranchInst::Create(loopExit, loopHeader, comp, instrHeader);
 
   // Redirect loop pred to our header.
   TerminatorInst* term = oldPred->getTerminator();
