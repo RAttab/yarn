@@ -405,9 +405,6 @@ void YarnLoop::processInvariants (Instruction* Inst) {
 
 
 void YarnLoop::processArrayEntries () {
-
-  errs() << "processEntryValues::Dependencies:\n";
-
   unsigned Index = 0;
   for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
        it != itEnd; ++it)
@@ -725,8 +722,6 @@ char YarnLoopInfo::ID = 0;
 
 
 void YarnLoopInfo::getAnalysisUsage (AnalysisUsage &AU) const {
-  errs() << "START YarnLoopInfo::getAnalysisUsage\n";
-
   AU.setPreservesAll();
 
   /* LLVM Won't schedul these two for whatever reason...
@@ -742,8 +737,6 @@ void YarnLoopInfo::getAnalysisUsage (AnalysisUsage &AU) const {
   AU.addRequired<PostDominatorTree>();
   AU.addRequired<DominatorTree>();
   AU.addRequiredTransitive<AliasAnalysis>();
-
-  errs() << "END   YarnLoopInfo::getAnalysisUsage\n";
 
 }
 
@@ -771,10 +764,7 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
       LoopValues += yLoop->getDependencies().size();
       LoopPointers += yLoop->getPointers().size();
       LoopInvariants += yLoop->getInvariants().size();
-      
-      F.print(errs());
-      yLoop->print(errs());
-      
+       
     }
     else {
       delete yLoop;
