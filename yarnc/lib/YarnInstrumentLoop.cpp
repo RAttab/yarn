@@ -206,6 +206,59 @@ namespace {
     virtual void print (llvm::raw_ostream &O, const llvm::Module *M) const;
 
   };    
+
+//===----------------------------------------------------------------------===//
+/// Casting utilities
+
+
+  Value* cast(Value* val, 
+	      const Type* target, 
+	      const std::string& name = "", 
+	      Instruction* insertBefore = NULL) 
+  {
+    if (val->getType() == target) {
+      return val;
+    }
+
+    bool srcPtr = val->getType()->isPointerTy();
+    bool targetPtr = target->isPointerTy();
+
+    if(srcPtr == targetPtr) {
+      return new BitCastInst(val, target, name, insertBefore);
+    }
+    if (targetPtr) {
+      return new IntToPtrInst(val, target, name, insertBefore);
+    }
+    if (srcPtr) {
+      return new PtrToIntInst(val, target, name, insertBefore);
+    }
+    assert(false && "Unreachable.");
+  }
+
+  Value* cast(Value* val, 
+	      const Type* target, 
+	      const std::string& name, 
+	      BasicBlock* insertAtEnd) 
+  {
+    if (val->getType() == target) {
+      return val;
+    }
+
+    bool srcPtr = val->getType()->isPointerTy();
+    bool targetPtr = target->isPointerTy();
+
+    if (srcPtr == targetPtr) {
+      return new BitCastInst(val, target, name, insertAtEnd);
+    }
+    if (targetPtr) {
+      return new IntToPtrInst(val, target, name, insertAtEnd);
+    }
+    if (targetPtr) {
+      return new PtrToIntInst(val, target, name, insertAtEnd);
+    }
+    assert(false && "Unreachable.");
+  }
+
     
 } // anynmous namespace
 
@@ -321,18 +374,19 @@ void InstrumentLoopUtil::createTmpFct () {
 
 
   // Create pool_id and task argument placeholders. Needed by createNewFct.
+  // The casts are just to make sure we have the right type (even if they do nothing).
   Value* poolIdVal = 
     new BitCastInst(ConstantInt::get(IMU->getYarnWordType(), 0),
 		    IMU->getYarnWordType(), IMU->makeName('z'), instrHeader);
+
   Value* taskPtr = 
     new IntToPtrInst(ConstantInt::get(IMU->getYarnWordType(), 0),
-		      IMU->getVoidPtrType(), IMU->makeName('z'), instrHeader);
-  
+		     IMU->getVoidPtrType(), IMU->makeName('z'), instrHeader);
+
   // struct task* s = (struct task*) task;
-  Value* loopArrayPtr =
-    new BitCastInst(taskPtr, 
-		    PointerType::getUnqual(IMU->getLoopArrayType(YL)),
-		    IMU->makeName('s'), instrHeader);
+  Value* loopArrayPtr = 
+    cast(taskPtr, PointerType::getUnqual(IMU->getLoopArrayType(YL)),
+	 IMU->makeName('s'), instrHeader);
   
   // Extract the structure for use within the function.
   typedef YarnLoop::ArrayEntryList AEL;
@@ -357,14 +411,17 @@ void InstrumentLoopUtil::createTmpFct () {
       Value* invariant = 
 	new LoadInst(ptr, IMU->makeName('v'), instrHeader);
 
+      Value* castedInvariant =
+	cast(invariant, entryVal->getType(), IMU->makeName('v'), instrHeader);
+
       // The value is an invariant so replace the old val with the loaded val.
       Function::iterator bbIt (instrHeader);      
-      replaceUsesInScope(bbIt, TmpFct->end(), entryVal, invariant); 
+      replaceUsesInScope(bbIt, TmpFct->end(), entryVal, castedInvariant); 
     }
     else {
       // Gotta make sure it's a void* for the calls to yarn_dep
       Value* castedPtr = 
-	new BitCastInst(ptr, IMU->getVoidPtrType(), IMU->makeName('p'), instrHeader);
+	cast(ptr, IMU->getVoidPtrType(), IMU->makeName('p'), instrHeader);
 
       ae->setPointer(castedPtr);
     }
@@ -376,8 +433,7 @@ void InstrumentLoopUtil::createTmpFct () {
 
   // Gotta make sure it's a void ptr type.
   Value* bufferVoidPtr = 
-    new BitCastInst(bufferWordPtr, IMU->getVoidPtrType(), 
-		    IMU->makeName('b'), instrHeader);
+    cast(bufferWordPtr, IMU->getVoidPtrType(), IMU->makeName('b'), instrHeader);
   
 
   // Add the terminator instruction.
@@ -385,9 +441,9 @@ void InstrumentLoopUtil::createTmpFct () {
 
   // Do the rest of the instrumentation.
   instrumentTmpBody(poolIdVal, bufferWordPtr, bufferVoidPtr);
-  cleanupTmpFct(instrHeader);
-  
+  cleanupTmpFct(instrHeader);  
 }
+
 
 
 void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, 
@@ -426,9 +482,14 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 				  args.begin(), args.end(), 
 				  IMU->makeName('r'), pos);
 
-	// Load the buffer into a new value.
+	// Cast the buffer pointer so we load the right type.
+	Value* castedBufferPtr = 
+	  cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
+	       IMU->makeName('z'), pos);
+
+	// Load the buffer into a new value and cast it.
 	// Place before the target instruction.
-	newVal = new LoadInst(bufferWordPtr, IMU->makeName('l'), pos);		
+	newVal = new LoadInst(castedBufferPtr, IMU->makeName('l'), pos);
       }
 
       else {
@@ -441,9 +502,15 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 				  args.begin(), args.end(),
 				  IMU->makeName('r'), pos);
 
+	// Cast the buffer pointer so we load the right type.
+	Value* castedBufferPtr = 
+	  cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
+	       IMU->makeName('z'), pos);
+
+
 	// Load the buffer into a new value.
 	//Append at the end of the BB.
-	newVal = new LoadInst(bufferWordPtr, IMU->makeName('l'), pos);	
+	newVal = new LoadInst(castedBufferPtr, IMU->makeName('l'), pos);	
       }
 
       // Replace the old value with the loaded value 
@@ -469,17 +536,23 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 				  args.begin(), args.end(),
 				  IMU->makeName('r'));
 
-	// Write the value into the buffer and place this instruction before the call.
-	Instruction* storeInst = new StoreInst(oldVal, bufferWordPtr);
+	// Make sure the stored value is of a compatible type.
+	Value* castVal = cast(oldVal, IMU->getYarnWordType(), IMU->makeName('z'));
 
+	// Write the value into the buffer and place this instruction before the call.
+	Instruction* storeInst = new StoreInst(castVal, bufferWordPtr);
 
 	// Place both instructions after the write instruction.
 	Instruction* pos = map<Instruction>::get(TmpVMap, valueInstr->getInstPos());
 	BasicBlock::InstListType& instList = pos->getParent()->getInstList();
 	BasicBlock::iterator posIt(pos);
 
+	// Added in reverse order.
 	instList.insertAfter(pos, retVal);
 	instList.insertAfter(pos, storeInst);
+	if (castVal != oldVal) {
+	  instList.insertAfter(pos, dyn_cast<Instruction>(castVal));
+	}
 	
       }
       else {
@@ -492,8 +565,12 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 				  args.begin(), args.end(),
 				  IMU->makeName('r'), &pos->front());
 
+	// Make sure the stored value is of a compatible type.
+	Value* castInst = 
+	  cast(oldVal, IMU->getYarnWordType(), IMU->makeName('z'), &pos->front());
+
 	// Write the value into the buffer and place this instruction before the call.
-	new StoreInst(oldVal, bufferWordPtr, &pos->front());	
+	new StoreInst(castInst, bufferWordPtr, &pos->front());	
       }
     }
 
@@ -514,10 +591,10 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
     if (ptrInstr->getType() == InstrLoad) {
       LoadInst* loadInst = map<LoadInst>::get(TmpVMap, ptrInstr->getInstruction());
 
-      // Gotta make sure it's a void ptr type.
-      Instruction* srcVoidPtr = 
-	new BitCastInst(loadInst->getPointerOperand(), IMU->getVoidPtrType(), 
-			IMU->makeName('v'), loadInst);
+      // Cast the pointer for compatibility with yarn_dep call.
+      Value* srcVoidPtr = 
+	cast(loadInst->getPointerOperand(), IMU->getVoidPtrType(), 
+	     IMU->makeName('v'), loadInst);
 
       // Call yarn_dep_load to load the desired value into the buffer.
       std::vector<Value*> args;
@@ -529,16 +606,21 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 				       IMU->makeName('r'), loadInst);
       (void) retVal; // \todo do some error checking.
 
+      // Make sure we load the right type out of the buffer.
+      Value* castedBuffer = 
+	cast(bufferWordPtr, loadInst->getPointerOperand()->getType(), 
+	     IMU->makeName('z'), loadInst);
+
       // Load from the buffer which contains the result of the yarn call.
-      loadInst->setOperand(0, bufferWordPtr);
+      loadInst->setOperand(0, castedBuffer);
     }
 
     else if (ptrInstr->getType() == InstrStore) {
       StoreInst* storeInst = map<StoreInst>::get(TmpVMap, ptrInstr->getInstruction());
-      
-      Instruction* destVoidPtr = 
-	new BitCastInst(storeInst->getPointerOperand(), IMU->getVoidPtrType(), 
-			IMU->makeName('v'));
+
+      // convert the ptr to a void* for the yarn_dep call.
+      Value* destVoidPtr = 
+	cast(storeInst->getPointerOperand(), IMU->getVoidPtrType(), IMU->makeName('v'));
 
       // call yarn_dep_load after the store instruction.
       std::vector<Value*> args;
@@ -554,10 +636,18 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
       BasicBlock::InstListType& instList = storeInst->getParent()->getInstList();
       BasicBlock::iterator insertPos(storeInst);
       instList.insertAfter(insertPos, retVal);
-      instList.insertAfter(insertPos, destVoidPtr);
+      if (destVoidPtr != storeInst->getPointerOperand()) {
+	instList.insertAfter(insertPos, dyn_cast<Instruction>(destVoidPtr));
+      }
+
+
+      // Make sure the buffer receives the right type.
+      Value* castedBuffer = 
+	cast(bufferWordPtr, storeInst->getPointerOperand()->getType(),
+	     IMU->makeName('z'), storeInst);
 
       // Store into the buffer which is then used by the yarn call.
-      storeInst->setOperand(1, bufferWordPtr);
+      storeInst->setOperand(1, castedBuffer);
     }
 
     else {
@@ -565,51 +655,62 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
     }    
   }
 }
-void InstrumentLoopUtil::cleanupTmpFct(BasicBlock* headerBB) {  
 
+// For some reason the use_list for a BB is giving some weird result so we can't use
+// them to change the terminator inst. As a work-around we do a plain-old search.
+void InstrumentLoopUtil::cleanupTmpFct(BasicBlock* instrHeader) {  
   const Loop* l = YL->getLoop();
+  BasicBlock* headerBlock = map<BasicBlock>::get(TmpVMap, l->getHeader());
+  BasicBlock* latchBlock = map<BasicBlock>::get(TmpVMap, l->getLoopLatch());
+  BasicBlock* exitBlock = map<BasicBlock>::get(TmpVMap, l->getUniqueExitBlock());
 
-  // replace all forward out-of-loop edges by a ret break
-  for (Loop::block_iterator it = l->block_begin(), itEnd = l->block_end();
-       it != itEnd; ++it)
   {
-    if (!l->isLoopExiting(*it)) {
-      continue;
-    }
-    BasicBlock* exitingBB = map<BasicBlock>::get(TmpVMap, *it);
-    
-    // Remove the old terminator.
-    exitingBB->getTerminator()->eraseFromParent();
-    
-    // Create a return inst that breaks out of the loop.
-    ReturnInst::Create(IMU->getContext(), 
-		       ConstantInt::get(IMU->getEnumType(), yarn_ret_break),
-		       exitingBB);
-  }
+    // Create a block that contains the continue return statement.
+    BasicBlock* continueExit = 
+      BasicBlock::Create(IMU->getContext(), IMU->makeName('b'), TmpFct, exitBlock);
 
-  // replace the backedge by a ret continue.
-  {
-    BasicBlock* latch = map<BasicBlock>::get(TmpVMap, l->getLoopLatch());
-    assert(latch && "SimplifyLoop should ensure that we have a latch BB.");
-    
-    // Remove the old terminator.
-    latch->getTerminator()->eraseFromParent();
-
-    // Create a return inst that continues with the next iteration.
     ReturnInst::Create(IMU->getContext(), 
 		       ConstantInt::get(IMU->getEnumType(), yarn_ret_continue),
-		       latch);
-  }  
+		       continueExit);
+
+    TerminatorInst* ti = latchBlock->getTerminator();
+    for (unsigned i = 0; i < ti->getNumSuccessors(); ++i) {
+      if (ti->getSuccessor(i) == headerBlock) {
+	ti->setSuccessor(i, continueExit);
+      }
+    }
+  }
+
+  {    
+    // Create a block that contains the break return statement.
+    BasicBlock* breakExit = 
+      BasicBlock::Create(IMU->getContext(), IMU->makeName('b'), TmpFct, exitBlock);
+
+    ReturnInst::Create(IMU->getContext(), 
+		       ConstantInt::get(IMU->getEnumType(), yarn_ret_break),
+		       breakExit);
+    
+    std::vector<BasicBlock*> bbList = l->getBlocks();
+    for (size_t i = 0; i < bbList.size(); ++i) {
+      BasicBlock* bb = map<BasicBlock>::get(TmpVMap, bbList[i]);
+
+      TerminatorInst* ti = bb->getTerminator();
+      for (unsigned j = 0; j < ti->getNumSuccessors(); ++j) {
+	if (ti->getSuccessor(j) == exitBlock) {
+	  ti->setSuccessor(j, breakExit);
+	}
+      }      
+    }
+    
+  }
 
   // Delete header phi nodes
-  BasicBlock* headerBlock = map<BasicBlock>::get(TmpVMap, l->getHeader());
   while (PHINode* phi = dyn_cast<PHINode>(&headerBlock->front())) {
     phi->eraseFromParent();
   }
 
   // Remove all the excess BB.
-  BasicBlock* exitBlock = map<BasicBlock>::get(TmpVMap, l->getUniqueExitBlock());
-  pruneFunction(TmpFct, headerBB, exitBlock);
+  pruneFunction(TmpFct, instrHeader, exitBlock);
 }
 
 
@@ -675,6 +776,7 @@ void InstrumentLoopUtil::instrumentSrcFct() {
 
   for (unsigned i = 0; i < arrayEntries.size(); ++i) {
     ArrayEntry* ae = arrayEntries[i];
+    Value* entryValue = ae->getEntryValue();
 
     std::vector<Value*> indexes;
     indexes.push_back(ConstantInt::get(Type::getInt32Ty(IMU->getContext()), 0));
@@ -685,21 +787,27 @@ void InstrumentLoopUtil::instrumentSrcFct() {
       GetElementPtrInst::Create(arrayPtr,
 				indexes.begin(), indexes.end(),
 				IMU->makeName('p'), instrHeader);
+    
+    const Type* toCastType = entryValue ?
+      entryValue->getType() : ae->getExitNode()->getType();
+
+    Value* castedPtr = 
+      cast(ptr, PointerType::getUnqual(toCastType), 
+	   IMU->makeName('p'), instrHeader);
 
     // Store the current value into the structure.
-    Value* entryValue = ae->getEntryValue();
     if(entryValue) {
-      new StoreInst(entryValue, ptr, instrHeader);
+      new StoreInst(entryValue, castedPtr, instrHeader);
     }
 
     if (!ae->getIsInvariant()) {
-      ae->setPointer(ptr);
+      ae->setPointer(castedPtr);
     }
   }
 
   // Cast the array pointer for the call to yarn_exec.
   Value* arrayVoidPtr = 
-    new BitCastInst(arrayPtr, IMU->getVoidPtrType(), IMU->makeName('p'), instrHeader);
+    cast(arrayPtr, IMU->getVoidPtrType(), IMU->makeName('p'), instrHeader);
 
   // call yarn_exec_simple
   std::vector<Value*> args;
@@ -789,6 +897,10 @@ bool YarnInstrumentLoop::runOnModule(Module &M) {
 
   for (Module::iterator it = M.begin(), itEnd = M.end(); it != itEnd; ++it) {
     Function& fct = *it;
+    if (fct.isDeclaration()) {
+      continue;
+    }
+
     YarnLoopInfo& yli = getAnalysis<YarnLoopInfo>(fct);
     
     for (YarnLoopInfo::iterator loopIt = yli.begin(), loopItEnd = yli.end();
@@ -804,6 +916,10 @@ bool YarnInstrumentLoop::runOnModule(Module &M) {
       didSomething = true;
     }
   }
+
+  errs() << "\n\n\n=============== Final module:\n\n\n";
+  M.dump();
+  errs() << "\n\n\n=============================\n\n\n";
 
   return didSomething;
 }

@@ -122,10 +122,6 @@ namespace yarn {
       eraseInstructions(&(*it));
     }
 
-    llvm::errs() << "\n\n\n";
-    F->print(llvm::errs());
-    llvm::errs() << "\n\n\n";
-
     // Delete the basic blocks working forward (all use dependencies were cleared up).
     llvm::BasicBlock* bb;
     while ((bb = &bbList.front()) != keepStart) {
