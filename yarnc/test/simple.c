@@ -82,7 +82,7 @@ int main (int argc, char** argv) {
 
   word_t* e = ret_ptr(a);
 
-  printf("a=%zu, b=%zu, c=%zu", a, b, c);
+  printf("a=%zu, b=%zu, c=%p\n", a, b, c);
   
   return 0;
 }
