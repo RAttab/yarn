@@ -288,7 +288,7 @@ void InstrumentModuleUtil::createDeclarations () {
   YarnWordTy = IntegerType::get(M->getContext(), YarnWordBitSize);
   M->addTypeName("yarn_word_t", YarnWordTy);
 
-  EnumTy = Type::getInt32Ty(M->getContext());
+  EnumTy = IntegerType::get(M->getContext(), YarnRetBitSize);
   M->addTypeName("enum_t", EnumTy);
 
   VoidPtrTy = PointerType::getUnqual(Type::getInt8Ty(getContext()));
@@ -747,11 +747,13 @@ void InstrumentLoopUtil::createNewFct() {
 			    GlobalValue::InternalLinkage,
 			    IMU->makeName(FUNCTION), IMU->getModule());
 
-  // Setup the VMap so that we delete all the old arguments.
+  // CloneFunctionInto is made for inlining but since we don't use any of the
+  // arguments, just tell the clone fct to remap the args to some dummy value.
   for (Function::arg_iterator it = TmpFct->arg_begin(), itEnd = TmpFct->arg_end();
        it != itEnd; ++it)
-  {    
-    NewVMap[&(*it)] = NULL;
+  {
+    Argument* arg = &(*it);
+    NewVMap[arg] = Constant::getNullValue(arg->getType());
   }
 
   // Clone tmp into the new function
@@ -877,6 +879,24 @@ void InstrumentLoopUtil::instrumentSrcFct() {
       }
     }
   }  
+
+  // Update the PHI nodes for the invariants.
+  for (BasicBlock::iterator it = loopHeader->begin(), itEnd = loopHeader->end();
+       it != itEnd; ++it)
+  {
+    Instruction* inst = &(*it);
+
+    if (PHINode* phi = dyn_cast<PHINode>(inst)) {
+      int idx = phi->getBasicBlockIndex(oldPred);
+      if (idx >= 0) {
+	phi->setIncomingBlock(idx, instrHeader);
+      }
+    }
+
+    else {
+      break;
+    }
+  }
   
   // Check the return value of the speculative call.
   Value* comp = 

@@ -39,6 +39,9 @@ namespace yarn {
     yarn_ret_error = 2
   };
 
+  enum {
+    YarnRetBitSize = sizeof(yarn_ret)*8
+  };
 
 
 

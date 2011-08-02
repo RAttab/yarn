@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 
@@ -19,10 +20,16 @@ word_t fast_sum(word_t n) {
 
 
 int main(int argc, char** argv) {
-  
-  word_t n = 10000;
+  if (argc < 2) {
+    fprintf(stderr, "Missing argument.\n");
+    return 1;
+  }
+
+
+  word_t n = strtol(argv[1], NULL, 10);
   word_t slow = sum(n);
   word_t fast = fast_sum(n);
   printf("[%zu] sum=%zu, fast_sum=%zu\n", n, slow, fast);
-
+  
+  return 0;
 }
