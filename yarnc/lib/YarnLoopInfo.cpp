@@ -273,7 +273,7 @@ void YarnLoop::processFooterPHINode(PHINode* PHI, ValueMap& ExitingValueMap) {
   LoopValue::ValueList exitingValList;
 
   for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
-    if (!isInLoop(L, PHI->getIncomingBlock(i))) {
+    if (!isInLoop(L, PHI->getIncomingValue(i))) {
       continue;
     }
 
@@ -692,8 +692,15 @@ void YarnLoop::print (raw_ostream &OS) const {
   const std::string LVL2 = "\t\t";
   const std::string LVL3 = "\t\t\t";
 
-
   OS << LVL << "YarnLoop(" << F->getName() << "):\n";
+  OS << LVL
+     << "dep=" << Dependencies.size() << ", "
+     << "ptr=" << Pointers.size() << ", "
+     << "inv=" << Invariants.size() << ", "
+     << "pin=" << PointerInstrs.size() << ", "
+     << "vin=" << ValueInstrs.size() << ", "
+     << "aes=" << ArrayEntries.size() << "\n";
+
 
   for (unsigned i = 0; i < Dependencies.size(); ++i)
     Dependencies[i]->print(OS);
@@ -711,6 +718,7 @@ void YarnLoop::print (raw_ostream &OS) const {
     ValueInstrs[i]->print(OS);
   for (unsigned i = 0; i < ArrayEntries.size(); ++i) 
     ArrayEntries[i]->print(OS);
+
 }
 
 
@@ -768,7 +776,7 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
     }
     else {
       delete yLoop;
-    }      
+    }
   }
 
   return false;

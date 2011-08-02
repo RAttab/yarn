@@ -45,6 +45,9 @@ namespace yarn {
     if (llvm::Instruction* inst = llvm::dyn_cast<llvm::Instruction>(v)) {
       return l->contains(inst);
     }
+    else if (llvm::BasicBlock* bb = llvm::dyn_cast<llvm::BasicBlock>(v)) {
+      return l->contains(bb);
+    }
     return false;
   }
 

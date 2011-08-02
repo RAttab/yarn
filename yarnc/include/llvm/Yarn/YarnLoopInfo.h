@@ -233,7 +233,7 @@ namespace yarn {
   public :
 
     ArrayEntry(llvm::Value* EV, llvm::PHINode* EN, bool I):
-      EntryValue(EV), ExitNode(EN), IsInvariant(I), Pointer(NULL)
+      EntryValue(EV), ExitNode(EN), IsInvariant(I), Pointer(NULL), NewValue(NULL)
     {}
 
     inline llvm::Value* getEntryValue() const { return EntryValue; }
