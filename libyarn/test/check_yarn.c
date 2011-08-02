@@ -86,7 +86,6 @@ START_TEST (t_yarn_exec_simple) {
 	     "answer=%zu, expected=%zu (i=%d)", counter.acc, counter.r, i);
     fail_if (counter.i != counter.n+1,
 	     "i=%zu, expected=%zu", counter.i, counter.n+1);
-
   }
   
 }
@@ -97,11 +96,15 @@ Suite* yarn_exec_suite (bool para_only) {
   (void) para_only;
 
   Suite* s = suite_create("yarn_exec");
+  TCase* tc_std_init = tcase_create("yarn_exec_std_init");
+  tcase_add_checked_fixture(tc_std_init, t_yarn_setup, t_yarn_teardown);
+  tcase_add_test(tc_std_init, t_yarn_exec_simple);
+  suite_add_tcase(s, tc_std_init);
 
-  TCase* tc_seq = tcase_create("yarn_exec");
-  tcase_add_checked_fixture(tc_seq, t_yarn_setup, t_yarn_teardown);
-  tcase_add_test(tc_seq, t_yarn_exec_simple);
-  suite_add_tcase(s, tc_seq);
+  TCase* tc_fast_init = tcase_create("yarn_exec_fast_init");
+  tcase_add_test(tc_fast_init, t_yarn_exec_simple);
+  suite_add_tcase(s, tc_fast_init);
+
 
   return s;
 }

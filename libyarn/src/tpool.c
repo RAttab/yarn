@@ -38,6 +38,7 @@ struct pool_task {
 static yarn_atomic_ptr g_pool_task;
 static yarn_atomic_var g_pool_task_error;
 static yarn_atomic_var g_pool_thread_count;
+static yarn_atomic_var g_pool_destroy;
 static pthread_mutex_t g_pool_task_lock;
 static pthread_cond_t g_pool_task_cond;
 static pthread_barrier_t g_pool_task_barrier;
@@ -47,9 +48,26 @@ static inline void* worker_launcher (void* param);
 
 
 static inline yarn_word_t get_processor_count(void) {
+  //! \todo Need to ignore all logical hyperthreaded cores.
   return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
+
+static void stop_threads (void) {
+  {
+    YARN_CHECK_RET0(pthread_mutex_lock(&g_pool_task_lock));
+
+    yarn_writev(&g_pool_destroy, true);
+    YARN_CHECK_RET0(pthread_cond_broadcast(&g_pool_task_cond));
+
+    YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
+  }
+
+  for (yarn_word_t pool_id = 0; pool_id < g_pool_size; ++pool_id) {
+    pthread_join(g_pool[pool_id].thread, NULL);
+  }
+
+}
 
 
 yarn_word_t yarn_tpool_size (void) {
@@ -78,6 +96,8 @@ bool yarn_tpool_init (void) {
   g_pool = (struct pool_thread*) malloc(sizeof(struct pool_thread) * g_pool_size);
   if (g_pool == NULL) goto pool_alloc_error;
 
+  yarn_writev(&g_pool_destroy, false);
+
   yarn_word_t pool_id = 0;
   for (; pool_id < g_pool_size; ++pool_id) {
 
@@ -98,11 +118,7 @@ bool yarn_tpool_init (void) {
   // Cleanup in case of error.
 
  thread_create_error:
-  for (yarn_word_t i = 0; i < pool_id; ++i) {
-    pthread_cancel(g_pool[i].thread);
-    pthread_detach(g_pool[i].thread);
-  }
-
+  stop_threads();
   free(g_pool);
  pool_alloc_error:
   pthread_barrier_destroy(&g_pool_task_barrier);
@@ -121,13 +137,10 @@ void yarn_tpool_destroy (void) {
     return;
   }
 
-  for (yarn_word_t pool_id = 0; pool_id < g_pool_size; ++pool_id) {
-    pthread_detach(g_pool[pool_id].thread);
-    pthread_cancel(g_pool[pool_id].thread);
-  }
+  stop_threads();
 
-  pthread_cond_destroy(&g_pool_task_cond);
-  pthread_mutex_destroy(&g_pool_task_lock);
+  YARN_CHECK_RET0(pthread_cond_destroy(&g_pool_task_cond));
+  YARN_CHECK_RET0(pthread_mutex_destroy(&g_pool_task_lock));
 
   //! \todo May not have been initialized and destroying it could cause problems.
   pthread_barrier_destroy(&g_pool_task_barrier);
@@ -195,17 +208,22 @@ static inline void* worker_launcher (void* param) {
 
   int ret = 0;
 
-  while (true) {
+  while (!yarn_readv(&g_pool_destroy)) {
 
     struct pool_task* task = NULL;
 
     {
       YARN_CHECK_RET0(pthread_mutex_lock(&g_pool_task_lock));
-      while (yarn_readp(&g_pool_task) == NULL) {
+      while (yarn_readp(&g_pool_task) == NULL && !yarn_readv(&g_pool_destroy)) {
 	YARN_CHECK_RET0(pthread_cond_wait(&g_pool_task_cond, &g_pool_task_lock));
       }
       task = (struct pool_task*) yarn_readp(&g_pool_task);
+
       YARN_CHECK_RET0(pthread_mutex_unlock(&g_pool_task_lock));
+    }
+
+    if (yarn_readv(&g_pool_destroy)) {
+      break;
     }
     
     if (pool_id < yarn_readv(&g_pool_thread_count)) {
@@ -230,7 +248,6 @@ static inline void* worker_launcher (void* param) {
       YARN_CHECK_ERR();
     }
 
-    pthread_testcancel();
   }
 
   return NULL;

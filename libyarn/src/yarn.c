@@ -22,8 +22,8 @@ struct task_info {
 };
 
 
+static bool g_is_init = false;
 static bool g_is_dep_init;
-
 
 static bool init_dep (size_t ws_size, yarn_word_t index_size) {
   if (g_is_dep_init) {
@@ -56,14 +56,21 @@ static bool init_dep (size_t ws_size, yarn_word_t index_size) {
 static void destroy_dep (void) {
   if (g_is_dep_init) {
     yarn_dep_global_destroy();
+    g_is_dep_init = false;
   }
 }
 
 
 bool yarn_init (void) {
 
+  if (g_is_init) {
+    return true;
+  }
+
   if (!yarn_tpool_init()) goto tpool_error;  
   if (!yarn_epoch_init()) goto epoch_error;
+  
+  g_is_init = true;
 
   return true;
 
@@ -77,9 +84,15 @@ bool yarn_init (void) {
 
 
 void yarn_destroy(void) {
+  if (!g_is_init) {
+    return;
+  }
+
   destroy_dep();
   yarn_epoch_destroy();
   yarn_tpool_destroy();
+
+  g_is_init = false;
 }
 
 
@@ -156,9 +169,16 @@ bool yarn_exec_simple (yarn_executor_t executor,
 		       yarn_word_t ws_size, 
 		       yarn_word_t index_size) 
 {
-  //  yarn_timer_dbg_set(); 
-
   bool ret;
+
+  bool del_on_exit = false;
+  if (!g_is_init) {
+    ret = yarn_init();
+    if (!ret) goto yarn_init_error;
+
+    del_on_exit = true;
+  }
+
 
   ret = init_dep(ws_size, index_size);
   if (!ret) goto dep_alloc_error;
@@ -170,11 +190,15 @@ bool yarn_exec_simple (yarn_executor_t executor,
   ret = yarn_tpool_exec(pool_worker_simple, (void*) &info, thread_count);
   if (!ret) goto exec_error;
 
+  if (del_on_exit) yarn_destroy();
+
   return true;
 
  exec_error:
  epoch_reset_error:
  dep_alloc_error:
+  if(del_on_exit) yarn_destroy();
+ yarn_init_error:
   perror(__FUNCTION__);
   return false;
 }
