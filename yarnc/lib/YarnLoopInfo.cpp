@@ -634,6 +634,8 @@ void YarnLoop::processPointerInstrs (LoopPointer* lp) {
 
  void YarnLoop::processValueInstrs (LoopValue* lv, unsigned index) {
 
+   std::set<Value*> itValues;
+
   if (!lv->isExitOnly()) {
 
     // Load of the iteration values.
@@ -655,6 +657,8 @@ void YarnLoop::processPointerInstrs (LoopPointer* lp) {
     // Store of the iteration values.
     {
       Value* endItVal = lv->getEndIterationValue();
+      itValues.insert(endItVal);
+
       BBPosList posList = findStorePos(endItVal);
 
       for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
@@ -674,6 +678,12 @@ void YarnLoop::processPointerInstrs (LoopPointer* lp) {
        it != itEnd; ++it) 
   {
     Value* exitingVal = *it;
+    
+    // If we already instrumented it, don't do it twice.
+    if (itValues.find(exitingVal) != itValues.end()) {
+      continue;
+    }
+
     BBPosList posList = findStorePos(exitingVal);
     
     for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
@@ -777,6 +787,7 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
     else {
       delete yLoop;
     }
+
   }
 
   return false;
