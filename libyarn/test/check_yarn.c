@@ -39,24 +39,22 @@ typedef struct {
 
 
 #define CHECK_DEP(x) if(!(x)) goto dep_error;
-#define INDEX_I 0
-#define INDEX_ACC 1
+#define INDEX_ACC 0
 
-enum yarn_ret t_yarn_exec_simple_worker (yarn_word_t pool_id, void* data) {
+enum yarn_ret t_yarn_exec_simple_worker (const yarn_word_t pool_id, 
+					 void* data, 
+					 yarn_word_t indvar) 
+{
   data_t* counter = (data_t*) data;
-  
-  yarn_word_t i;
-  CHECK_DEP(yarn_dep_load_fast(pool_id, INDEX_I, &counter->i, &i));
-  i++;
-  CHECK_DEP(yarn_dep_store_fast(pool_id, INDEX_I, &i, &counter->i));
-      
-  if (i > counter->n) {
+        
+  if (indvar > counter->n) {
+    yarn_dep_store(pool_id, &indvar, &counter->i);
     return yarn_ret_break;
   }
       
   yarn_word_t acc;
   CHECK_DEP(yarn_dep_load_fast(pool_id, INDEX_ACC, &counter->acc, &acc));
-  acc += i;
+  acc += indvar;
   CHECK_DEP(yarn_dep_store_fast(pool_id, INDEX_ACC, &acc, &counter->acc));
 
   return yarn_ret_continue;
@@ -79,7 +77,7 @@ START_TEST (t_yarn_exec_simple) {
     counter.r = (counter.n*(counter.n+1))/2;  
 
     bool ret = yarn_exec_simple(t_yarn_exec_simple_worker, &counter, 
-				YARN_ALL_THREADS, 2, 2);
+				YARN_ALL_THREADS, 2, 1);
 
     fail_if (!ret);
     fail_if (counter.acc != counter.r, 

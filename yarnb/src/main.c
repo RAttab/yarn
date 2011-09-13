@@ -55,7 +55,7 @@ int speedup_search (const double target_speedup,
 		    yarn_word_t thread_count);
 
 void run_normal (struct task* t);
-enum yarn_ret run_speculative (yarn_word_t pool_id, void* task);
+enum yarn_ret run_speculative (const yarn_word_t pool_id, void* task, yarn_word_t indvar);
 
 
 
@@ -407,19 +407,15 @@ void run_normal (struct task* t) {
   }
 }
 
-enum yarn_ret run_speculative (yarn_word_t pool_id, void* task) {
+enum yarn_ret run_speculative (const yarn_word_t pool_id, void* task, yarn_word_t indvar) {
   struct task* t = (struct task*) task;
 
-  size_t i;
-  yarn_dep_load(pool_id, &t->i, &i);
-  i++;
-  yarn_dep_store(pool_id, &i, &t->i);
-
-  if (i >= t->n) {
+  if (indvar >= t->n) {
+    yarn_dep_store(pool_id, &indvar, &t->i);
     return yarn_ret_break;
   }
 
-  size_t src = i % t->array_size;
+  size_t src = indvar % t->array_size;
   //  size_t dest = (src+1) % t->array_size;    
   size_t dest = src;
   yarn_word_t value;

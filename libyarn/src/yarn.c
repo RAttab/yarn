@@ -133,7 +133,10 @@ bool pool_worker_simple (yarn_word_t pool_id, void* task) {
       goto init_error;
     }
     
-    enum yarn_ret exec_ret = info->executor(pool_id, info->data);
+    // In the simple format we have a one to one mapping of invar to epoch id.
+    //  Note that epoch ids are reseted back to 0 when we restart.
+    const yarn_word_t indvar = epoch;
+    enum yarn_ret exec_ret = info->executor(pool_id, info->data, indvar);
     if (exec_ret == yarn_ret_break) {
       yarn_epoch_stop(epoch);
     }

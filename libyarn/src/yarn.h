@@ -15,7 +15,9 @@ enum yarn_ret {
   yarn_ret_error = 2
 };
 
-typedef enum yarn_ret (*yarn_executor_t) (const yarn_word_t pool_id, void* data);
+typedef enum yarn_ret (*yarn_executor_t) (const yarn_word_t pool_id, 
+					  void* data,
+					  yarn_word_t indvar);
 
 bool yarn_init (void);
 void yarn_destroy (void);

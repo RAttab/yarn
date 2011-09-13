@@ -198,6 +198,7 @@ namespace {
     void instrumentSrcFct();
 
     void instrumentTmpBody (Value* poolIdVal, 
+			    Value* indVar,
 			    Value* bufferWordPtr, 
 			    Value* bufferVoidPtr);
     void cleanupTmpFct(BasicBlock*);
@@ -300,6 +301,7 @@ void InstrumentModuleUtil::createDeclarations () {
     std::vector<const Type*> args;
     args.push_back(YarnWordTy); // yarn_word_t pool_id
     args.push_back(VoidPtrTy);  // void* data
+    args.push_back(YarnWordTy); // yarn_word_t indvar
     YarnExecutorFctTy = FunctionType::get(EnumTy, args, false); // enum yarn_ret
     M->addTypeName("yarn_executor_t", YarnExecutorFctTy);
   }
@@ -409,6 +411,10 @@ void InstrumentLoopUtil::createTmpFct () {
     new IntToPtrInst(ConstantInt::get(IMU->getYarnWordType(), 0),
 		     IMU->getVoidPtrType(), IMU->makeName(TEMP), instrHeader);
 
+  Value* indVar = 
+    new BitCastInst(ConstantInt::get(IMU->getYarnWordType(), 0),
+		    IMU->getYarnWordType(), IMU->makeName(TEMP), instrHeader);
+
   // struct task* s = (struct task*) task;
   Value* loopArrayPtr = 
     cast(taskPtr, PointerType::getUnqual(IMU->getLoopArrayType(YL)),
@@ -466,16 +472,20 @@ void InstrumentLoopUtil::createTmpFct () {
   BranchInst::Create(loopHeader, instrHeader);
 
   // Do the rest of the instrumentation.
-  instrumentTmpBody(poolIdVal, bufferWordPtr, bufferVoidPtr);
+  instrumentTmpBody(poolIdVal, indVar, bufferWordPtr, bufferVoidPtr);
   cleanupTmpFct(instrHeader);  
 }
 
 
 
 void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, 
+					    Value* indVar,
 					    Value* bufferWordPtr, 
 					    Value* bufferVoidPtr)
 {
+
+  //! \todo Need to start supporting this.
+  (void) indVar;
 
   // Process the value accesses.
   typedef YarnLoop::ValueInstrList VIL;
@@ -760,11 +770,10 @@ void InstrumentLoopUtil::createNewFct() {
   SmallVectorImpl<ReturnInst*> retList(4);
   CloneFunctionInto(NewFct, TmpFct, NewVMap, false, retList);
 
-  // replace the placeholders by the arguments.
   Function::arg_iterator argIt = NewFct->arg_begin();
   BasicBlock::iterator bbIt = NewFct->front().begin();
 
-  // Replace the pool_id argument with it's placeholder.
+  // Replace the pool_id argument with its placeholder.
   Argument* argPoolId = &(*argIt);
   Instruction* tmpPoolId = dyn_cast<Instruction>(&(*bbIt));
   tmpPoolId->replaceAllUsesWith(argPoolId);
@@ -772,16 +781,23 @@ void InstrumentLoopUtil::createNewFct() {
   argIt++;
   bbIt++;
 
-  // Replace the task  argument with it's placeholder.
+  // Replace the task  argument with its placeholder.
   Argument* argTaskPtr = &(*argIt);
   Instruction* tmpTaskPtr = dyn_cast<Instruction>(&(*bbIt));
   tmpTaskPtr->replaceAllUsesWith(argTaskPtr);
 
+  argIt++;
+  bbIt++;
+
+  // Replace the indvar argument with its placeholder.
+  Argument* argIndVar = &(*argIt);
+  Instruction* tmpIndVar = dyn_cast<Instruction>(&(*bbIt));
+  tmpIndVar->replaceAllUsesWith(argIndVar);
+
   // Remove the placeholders
   tmpPoolId->eraseFromParent();
-  tmpPoolId = NULL;
   tmpTaskPtr->eraseFromParent();
-  tmpTaskPtr = NULL;
+  tmpIndVar->eraseFromParent();
 }
 
 
