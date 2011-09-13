@@ -201,9 +201,36 @@ namespace {
     void instrumentSrcFct();
 
     void instrumentTmpBody (Value* poolIdVal, 
-			    Value* indVar,
 			    Value* bufferWordPtr, 
 			    Value* bufferVoidPtr);
+
+    void instrumentIndVar (Value* poolIdVal, 
+			   Value* bufferWordPtr, 
+			   Value* bufferVoidPtr,
+			   Value* indVar);
+
+    void instrumentValueLoad (Value* poolIdVal,
+			      Value* bufferWordPtr, 
+			      Value* bufferVoidPtr,
+			      const ValueInstr* valueInstr,
+			      const ArrayEntry* ae);
+
+    void instrumentValueStore (Value* poolIdVal,
+			       Value* bufferWordPtr, 
+			       Value* bufferVoidPtr,
+			       const ValueInstr* valueInstr,
+			       const ArrayEntry* ae);
+
+    void instrumentPtrLoad (Value* poolIdVal,
+			    Value* bufferWordPtr, 
+			    Value* bufferVoidPtr,
+			    const PointerInstr* ptrInstr);
+
+    void instrumentPtrStore (Value* poolIdVal,
+			     Value* bufferWordPtr, 
+			     Value* bufferVoidPtr,
+			     const PointerInstr* ptrInstr);
+
     void cleanupTmpFct(BasicBlock*);
 
   };
@@ -485,21 +512,17 @@ void InstrumentLoopUtil::createTmpFct () {
   BranchInst::Create(loopHeader, instrHeader);
 
   // Do the rest of the instrumentation.
-  instrumentTmpBody(poolIdVal, indVar, bufferWordPtr, bufferVoidPtr);
+  instrumentTmpBody(poolIdVal, bufferWordPtr, bufferVoidPtr);
+  instrumentIndVar(poolIdVal, bufferWordPtr, bufferVoidPtr, indVar);
   cleanupTmpFct(instrHeader);  
 }
 
 
 
 void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, 
-					    Value* indVar,
 					    Value* bufferWordPtr, 
 					    Value* bufferVoidPtr)
 {
-
-  //! \todo Need to start supporting this.
-  (void) indVar;
-
   // Process the value accesses.
   typedef YarnLoop::ValueInstrList VIL;
   const VIL& valInstrList = YL->getValueInstrs();
@@ -508,122 +531,13 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
   {
     const ValueInstr* valueInstr = *it;
     const ArrayEntry* ae = YL->getArrayEntry(valueInstr->getIndex());
-    const std::string name = ae->getName();
     
     if (valueInstr->getType() == InstrLoad) {
-      Instruction* oldVal = map<Instruction>::get(TmpVMap, valueInstr->getValue());
-      
-      // Create the arguments for the yarn_dep call.
-      std::vector<Value*> args;
-      args.push_back(poolIdVal);
-      args.push_back(ConstantInt::get(IMU->getYarnWordType(), valueInstr->getIndex()));
-      args.push_back(ae->getPointer()); // src
-      args.push_back(bufferVoidPtr); // dest
-
-      Instruction* retVal;
-      Instruction* newVal;
-
-      if (valueInstr->getInstPos()) {
-	Instruction* pos = map<Instruction>::get(TmpVMap, valueInstr->getInstPos());
-
-	// Call yarn_dep_load to load the desired value into the buffer.
-	// Place before the target instruction.
-	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
-				  args.begin(), args.end(), 
-				  IMU->makeName(RET, name), pos);
-
-	// Cast the buffer pointer so we load the right type.
-	Value* castedBufferPtr = 
-	  cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
-	       IMU->makeName(BUFFER, name), pos);
-
-	// Load the buffer into a new value and cast it.
-	// Place before the target instruction.
-	newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED, name), pos);
-      }
-
-      else {
-	BasicBlock* pos = map<BasicBlock>::get(TmpVMap, valueInstr->getBBPos());
-	assert (pos && "Either getInstPos or getBBPos should be non-null.");
-	
-	// Call yarn_dep_load to load the desired value into the buffer. 
-	//Append at the end of the BB.
-	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
-				  args.begin(), args.end(),
-				  IMU->makeName(RET, name), pos);
-
-	// Cast the buffer pointer so we load the right type.
-	Value* castedBufferPtr = 
-	  cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
-	       IMU->makeName(BUFFER, name), pos);
-
-
-	// Load the buffer into a new value.
-	//Append at the end of the BB.
-	newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED, name), pos);
-      }
-
-      // Replace the old value with the loaded value 
-      Function::iterator bbIt (oldVal->getParent());      
-      replaceUsesInScope(bbIt, TmpFct->end(), oldVal, newVal); 
+      instrumentValueLoad(poolIdVal, bufferWordPtr, bufferVoidPtr, valueInstr, ae);
     }
-
     else if (valueInstr->getType() == InstrStore) {
-      Value* oldVal = map<>::get(TmpVMap, valueInstr->getValue());
-
-      // Create the arguments for the yarn_dep call.
-      std::vector<Value*> args;
-      args.push_back(poolIdVal);
-      args.push_back(ConstantInt::get(IMU->getYarnWordType(), valueInstr->getIndex()));
-      args.push_back(bufferVoidPtr); // src
-      args.push_back(ae->getPointer()); // dest
-
-      Instruction* retVal;
-
-      if (valueInstr->getInstPos()) {
-	// Call yarn to store the buffer into memory.
-	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
-				  args.begin(), args.end(),
-				  IMU->makeName(RET, name));
-
-	// Make sure the stored value is of a compatible type.
-	Value* castVal = cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP, name));
-
-	// Write the value into the buffer and place this instruction before the call.
-	Instruction* storeInst = new StoreInst(castVal, bufferWordPtr);
-
-	// Place both instructions after the write instruction.
-	Instruction* pos = map<Instruction>::get(TmpVMap, valueInstr->getInstPos());
-	BasicBlock::InstListType& instList = pos->getParent()->getInstList();
-	BasicBlock::iterator posIt(pos);
-
-	// Added in reverse order.
-	instList.insertAfter(pos, retVal);
-	instList.insertAfter(pos, storeInst);
-	if (castVal != oldVal) {
-	  instList.insertAfter(pos, dyn_cast<Instruction>(castVal));
-	}
-	
-      }
-      else {
-	BasicBlock* pos = map<BasicBlock>::get(TmpVMap, valueInstr->getBBPos());
-	assert (pos && "Either getInstPos or getBBPos should be non-null.");
-
-	// Call yarn to store the buffer into memory.
-	// Place the call at the beginning of the BB.
-	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
-				  args.begin(), args.end(),
-				  IMU->makeName(RET, name), &pos->front());
-
-	// Make sure the stored value is of a compatible type.
-	Value* castInst = 
-	  cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP, name), &pos->front());
-
-	// Write the value into the buffer and place this instruction before the call.
-	new StoreInst(castInst, bufferWordPtr, &pos->front());	
-      }
+      instrumentValueStore(poolIdVal, bufferWordPtr, bufferVoidPtr, valueInstr, ae);
     }
-
     else {
       assert(false && "Sanity check.");
     }    
@@ -637,76 +551,246 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
        it != itEnd; ++it)
   {
     const PointerInstr* ptrInstr = *it;
-    const std::string name = ptrInstr->getInstruction()->getName();
     
     if (ptrInstr->getType() == InstrLoad) {
-      LoadInst* loadInst = map<LoadInst>::get(TmpVMap, ptrInstr->getInstruction());
-
-      // Cast the pointer for compatibility with yarn_dep call.
-      Value* srcVoidPtr = 
-	cast(loadInst->getPointerOperand(), IMU->getVoidPtrType(), 
-	     IMU->makeName(TEMP, name), loadInst);
-
-      // Call yarn_dep_load to load the desired value into the buffer.
-      std::vector<Value*> args;
-      args.push_back(poolIdVal);
-      args.push_back(srcVoidPtr); // src
-      args.push_back(bufferVoidPtr); // dest
-      Value* retVal = CallInst::Create(IMU->getYarnDepLoadFct(), 
-				       args.begin(), args.end(), 
-				       IMU->makeName(RET, name), loadInst);
-      (void) retVal; // \todo do some error checking.
-
-      // Make sure we load the right type out of the buffer.
-      Value* castedBuffer = 
-	cast(bufferWordPtr, loadInst->getPointerOperand()->getType(), 
-	     IMU->makeName(TEMP, name), loadInst);
-
-      // Load from the buffer which contains the result of the yarn call.
-      loadInst->setOperand(0, castedBuffer);
+      instrumentPtrLoad(poolIdVal, bufferWordPtr, bufferVoidPtr, ptrInstr);
     }
-
     else if (ptrInstr->getType() == InstrStore) {
-      StoreInst* storeInst = map<StoreInst>::get(TmpVMap, ptrInstr->getInstruction());
-
-      // convert the ptr to a void* for the yarn_dep call.
-      Value* destVoidPtr = 
-	cast(storeInst->getPointerOperand(), IMU->getVoidPtrType(), 
-	     IMU->makeName(TEMP, name));
-
-      // call yarn_dep_load after the store instruction.
-      std::vector<Value*> args;
-      args.push_back(poolIdVal);
-      args.push_back(bufferVoidPtr); // src
-      args.push_back(destVoidPtr); // dest
-      Instruction* retVal = CallInst::Create(IMU->getYarnDepStoreFct(), 
-				       args.begin(), args.end(), 
-				       IMU->makeName(RET, name));
-      (void) retVal; // \todo Do some error checking.
-
-      // Insert both the instructions after the store instruction.
-      BasicBlock::InstListType& instList = storeInst->getParent()->getInstList();
-      BasicBlock::iterator insertPos(storeInst);
-      instList.insertAfter(insertPos, retVal);
-      if (destVoidPtr != storeInst->getPointerOperand()) {
-	instList.insertAfter(insertPos, dyn_cast<Instruction>(destVoidPtr));
-      }
-
-
-      // Make sure the buffer receives the right type.
-      Value* castedBuffer = 
-	cast(bufferWordPtr, storeInst->getPointerOperand()->getType(),
-	     IMU->makeName(TEMP, name), storeInst);
-
-      // Store into the buffer which is then used by the yarn call.
-      storeInst->setOperand(1, castedBuffer);
+      instrumentPtrStore(poolIdVal, bufferWordPtr, bufferVoidPtr, ptrInstr);
     }
-
     else {
       assert(false && "Sanity check.");
     }    
   }
 }
+
+
+void InstrumentLoopUtil::instrumentIndVar (Value* poolIdVal, 
+					   Value* bufferWordPtr, 
+					   Value* bufferVoidPtr,
+					   Value* indVar)
+{
+  //! \todo fillme
+}
+
+
+
+void InstrumentLoopUtil::instrumentValueLoad (Value* poolIdVal,
+					      Value* bufferWordPtr, 
+					      Value* bufferVoidPtr,
+					      const ValueInstr* valueInstr,
+					      const ArrayEntry* ae)
+{
+  const std::string name = ae->getName();
+
+  Instruction* oldVal = map<Instruction>::get(TmpVMap, valueInstr->getValue());
+      
+  // Create the arguments for the yarn_dep call.
+  std::vector<Value*> args;
+  args.push_back(poolIdVal);
+  args.push_back(ConstantInt::get(IMU->getYarnWordType(), valueInstr->getIndex()));
+  args.push_back(ae->getPointer()); // src
+  args.push_back(bufferVoidPtr); // dest
+
+  Instruction* retVal;
+  Instruction* newVal;
+
+  if (valueInstr->getInstPos()) {
+    Instruction* pos = map<Instruction>::get(TmpVMap, valueInstr->getInstPos());
+
+    // Call yarn_dep_load to load the desired value into the buffer.
+    // Place before the target instruction.
+    retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
+			      args.begin(), args.end(), 
+			      IMU->makeName(RET, name), pos);
+
+    // Cast the buffer pointer so we load the right type.
+    Value* castedBufferPtr = 
+      cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
+	   IMU->makeName(BUFFER, name), pos);
+
+    // Load the buffer into a new value and cast it.
+    // Place before the target instruction.
+    newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED, name), pos);
+  }
+
+  else {
+    BasicBlock* pos = map<BasicBlock>::get(TmpVMap, valueInstr->getBBPos());
+    assert (pos && "Either getInstPos or getBBPos should be non-null.");
+	
+    // Call yarn_dep_load to load the desired value into the buffer. 
+    //Append at the end of the BB.
+    retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
+			      args.begin(), args.end(),
+			      IMU->makeName(RET, name), pos);
+
+    // Cast the buffer pointer so we load the right type.
+    Value* castedBufferPtr = 
+      cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
+	   IMU->makeName(BUFFER, name), pos);
+
+
+    // Load the buffer into a new value.
+    //Append at the end of the BB.
+    newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED, name), pos);
+  }
+
+  // Replace the old value with the loaded value 
+  Function::iterator bbIt (oldVal->getParent());      
+  replaceUsesInScope(bbIt, TmpFct->end(), oldVal, newVal); 
+
+}
+
+
+void InstrumentLoopUtil::instrumentValueStore (Value* poolIdVal,
+					       Value* bufferWordPtr, 
+					       Value* bufferVoidPtr,
+					       const ValueInstr* valueInstr,
+					       const ArrayEntry* ae)
+{
+  const std::string name = ae->getName();
+
+  Value* oldVal = map<>::get(TmpVMap, valueInstr->getValue());
+
+  // Create the arguments for the yarn_dep call.
+  std::vector<Value*> args;
+  args.push_back(poolIdVal);
+  args.push_back(ConstantInt::get(IMU->getYarnWordType(), valueInstr->getIndex()));
+  args.push_back(bufferVoidPtr); // src
+  args.push_back(ae->getPointer()); // dest
+
+  Instruction* retVal;
+
+  if (valueInstr->getInstPos()) {
+    // Call yarn to store the buffer into memory.
+    retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
+			      args.begin(), args.end(),
+			      IMU->makeName(RET, name));
+
+    // Make sure the stored value is of a compatible type.
+    Value* castVal = cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP, name));
+
+    // Write the value into the buffer and place this instruction before the call.
+    Instruction* storeInst = new StoreInst(castVal, bufferWordPtr);
+
+    // Place both instructions after the write instruction.
+    Instruction* pos = map<Instruction>::get(TmpVMap, valueInstr->getInstPos());
+    BasicBlock::InstListType& instList = pos->getParent()->getInstList();
+    BasicBlock::iterator posIt(pos);
+
+    // Added in reverse order.
+    instList.insertAfter(pos, retVal);
+    instList.insertAfter(pos, storeInst);
+    if (castVal != oldVal) {
+      instList.insertAfter(pos, dyn_cast<Instruction>(castVal));
+    }
+	
+  }
+  else {
+    BasicBlock* pos = map<BasicBlock>::get(TmpVMap, valueInstr->getBBPos());
+    assert (pos && "Either getInstPos or getBBPos should be non-null.");
+
+    // Call yarn to store the buffer into memory.
+    // Place the call at the beginning of the BB.
+    retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
+			      args.begin(), args.end(),
+			      IMU->makeName(RET, name), &pos->front());
+
+    // Make sure the stored value is of a compatible type.
+    Value* castInst = 
+      cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP, name), &pos->front());
+
+    // Write the value into the buffer and place this instruction before the call.
+    new StoreInst(castInst, bufferWordPtr, &pos->front());	
+  }
+
+}
+
+
+
+void InstrumentLoopUtil::instrumentPtrLoad (Value* poolIdVal,
+					    Value* bufferWordPtr, 
+					    Value* bufferVoidPtr,
+					    const PointerInstr* ptrInstr)
+{
+    const std::string name = ptrInstr->getInstruction()->getName();
+
+    LoadInst* loadInst = map<LoadInst>::get(TmpVMap, ptrInstr->getInstruction());
+
+    // Cast the pointer for compatibility with yarn_dep call.
+    Value* srcVoidPtr = 
+      cast(loadInst->getPointerOperand(), IMU->getVoidPtrType(), 
+	   IMU->makeName(TEMP, name), loadInst);
+
+    // Call yarn_dep_load to load the desired value into the buffer.
+    std::vector<Value*> args;
+    args.push_back(poolIdVal);
+    args.push_back(srcVoidPtr); // src
+    args.push_back(bufferVoidPtr); // dest
+    Value* retVal = CallInst::Create(IMU->getYarnDepLoadFct(), 
+				     args.begin(), args.end(), 
+				     IMU->makeName(RET, name), loadInst);
+    (void) retVal; // \todo do some error checking.
+
+    // Make sure we load the right type out of the buffer.
+    Value* castedBuffer = 
+      cast(bufferWordPtr, loadInst->getPointerOperand()->getType(), 
+	   IMU->makeName(TEMP, name), loadInst);
+
+    // Load from the buffer which contains the result of the yarn call.
+    loadInst->setOperand(0, castedBuffer);
+
+}
+
+
+void InstrumentLoopUtil::instrumentPtrStore (Value* poolIdVal,
+					     Value* bufferWordPtr, 
+					     Value* bufferVoidPtr,
+					     const PointerInstr* ptrInstr)
+{
+    const std::string name = ptrInstr->getInstruction()->getName();
+
+    StoreInst* storeInst = map<StoreInst>::get(TmpVMap, ptrInstr->getInstruction());
+
+    // convert the ptr to a void* for the yarn_dep call.
+    Value* destVoidPtr = 
+      cast(storeInst->getPointerOperand(), IMU->getVoidPtrType(), 
+	   IMU->makeName(TEMP, name));
+
+    // call yarn_dep_load after the store instruction.
+    std::vector<Value*> args;
+    args.push_back(poolIdVal);
+    args.push_back(bufferVoidPtr); // src
+    args.push_back(destVoidPtr); // dest
+    Instruction* retVal = CallInst::Create(IMU->getYarnDepStoreFct(), 
+					   args.begin(), args.end(), 
+					   IMU->makeName(RET, name));
+    (void) retVal; // \todo Do some error checking.
+
+    // Insert both the instructions after the store instruction.
+    BasicBlock::InstListType& instList = storeInst->getParent()->getInstList();
+    BasicBlock::iterator insertPos(storeInst);
+    instList.insertAfter(insertPos, retVal);
+    if (destVoidPtr != storeInst->getPointerOperand()) {
+      instList.insertAfter(insertPos, dyn_cast<Instruction>(destVoidPtr));
+    }
+
+
+    // Make sure the buffer receives the right type.
+    Value* castedBuffer = 
+      cast(bufferWordPtr, storeInst->getPointerOperand()->getType(),
+	   IMU->makeName(TEMP, name), storeInst);
+
+    // Store into the buffer which is then used by the yarn call.
+    storeInst->setOperand(1, castedBuffer);
+
+}
+
+
+
+
+
+
 
 // For some reason the use_list for a BB is giving some weird result so we can't use
 // them to change the terminator inst. As a work-around we do a plain-old search.
