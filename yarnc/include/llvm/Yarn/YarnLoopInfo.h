@@ -246,6 +246,24 @@ namespace yarn {
     inline void setNewValue (llvm::Value* NV) { NewValue = NV; }
     inline llvm::Value* getNewValue() const { return NewValue; }
 
+    /*!
+      \todo Needs to be improved.
+      Doesn't work for induction variable because it's entry value is a constant (0).
+      In this case, we should use the name of the PHINode. This means that we have
+      have to get the name during the analysis phase and not the instrumentation phase.
+     */
+    inline std::string getName () const {
+      if (EntryValue != NULL) {
+	return EntryValue->getName();
+      }
+      else if (ExitNode != NULL) {
+	return ExitNode->getName();
+      }
+      else {
+	return "";
+      }
+    }
+
     /// Debug.  
     void print (llvm::raw_ostream &OS) const;
 

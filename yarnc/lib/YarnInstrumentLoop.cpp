@@ -132,6 +132,9 @@ namespace {
     }
 
     std::string makeName(char prefix);    
+    std::string makeName(char prefix, const std::string suffix);    
+
+
     void createDeclarations();
     ArrayType* createLoopArrayType (YarnLoop* yl, unsigned valueCount);
 
@@ -365,7 +368,15 @@ std::string InstrumentModuleUtil::makeName(char prefix) {
   return ss.str();
 }
 
+std::string InstrumentModuleUtil::makeName(char prefix, const std::string suffix) {
+  std::string name = makeName(prefix);
+  
+  if (suffix.size() > 0) {
+    name += "." + suffix;
+  }
 
+  return name;
+}
 
 
 
@@ -435,16 +446,17 @@ void InstrumentLoopUtil::createTmpFct () {
     Value* ptr =
       GetElementPtrInst::Create(loopArrayPtr,
 				indexes.begin(), indexes.end(),
-				IMU->makeName(POINTER), instrHeader);
+				IMU->makeName(POINTER, ae->getName()), instrHeader);
 
     if (ae->getIsInvariant()) {
       Value* entryVal = map<>::get(TmpVMap, ae->getEntryValue());
 
       Value* invariant = 
-	new LoadInst(ptr, IMU->makeName(INVARIANT), instrHeader);
+	new LoadInst(ptr, IMU->makeName(INVARIANT, ae->getName()), instrHeader);
 
       Value* castedInvariant =
-	cast(invariant, entryVal->getType(), IMU->makeName(INVARIANT), instrHeader);
+	cast(invariant, entryVal->getType(), 
+	     IMU->makeName(INVARIANT, ae->getName()), instrHeader);
 
       // The value is an invariant so replace the old val with the loaded val.
       Function::iterator bbIt (instrHeader);      
@@ -453,7 +465,8 @@ void InstrumentLoopUtil::createTmpFct () {
     else {
       // Gotta make sure it's a void* for the calls to yarn_dep
       Value* castedPtr = 
-	cast(ptr, IMU->getVoidPtrType(), IMU->makeName(POINTER), instrHeader);
+	cast(ptr, IMU->getVoidPtrType(), 
+	     IMU->makeName(POINTER, ae->getName()), instrHeader);
 
       ae->setPointer(castedPtr);
     }
@@ -495,6 +508,7 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
   {
     const ValueInstr* valueInstr = *it;
     const ArrayEntry* ae = YL->getArrayEntry(valueInstr->getIndex());
+    const std::string name = ae->getName();
     
     if (valueInstr->getType() == InstrLoad) {
       Instruction* oldVal = map<Instruction>::get(TmpVMap, valueInstr->getValue());
@@ -516,16 +530,16 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 	// Place before the target instruction.
 	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
 				  args.begin(), args.end(), 
-				  IMU->makeName(RET), pos);
+				  IMU->makeName(RET, name), pos);
 
 	// Cast the buffer pointer so we load the right type.
 	Value* castedBufferPtr = 
 	  cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
-	       IMU->makeName(BUFFER), pos);
+	       IMU->makeName(BUFFER, name), pos);
 
 	// Load the buffer into a new value and cast it.
 	// Place before the target instruction.
-	newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED), pos);
+	newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED, name), pos);
       }
 
       else {
@@ -536,17 +550,17 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 	//Append at the end of the BB.
 	retVal = CallInst::Create(IMU->getYarnDepLoadFastFct(), 
 				  args.begin(), args.end(),
-				  IMU->makeName(RET), pos);
+				  IMU->makeName(RET, name), pos);
 
 	// Cast the buffer pointer so we load the right type.
 	Value* castedBufferPtr = 
 	  cast(bufferWordPtr, PointerType::getUnqual(oldVal->getType()), 
-	       IMU->makeName(BUFFER), pos);
+	       IMU->makeName(BUFFER, name), pos);
 
 
 	// Load the buffer into a new value.
 	//Append at the end of the BB.
-	newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED), pos);	
+	newVal = new LoadInst(castedBufferPtr, IMU->makeName(LOADED, name), pos);
       }
 
       // Replace the old value with the loaded value 
@@ -570,10 +584,10 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 	// Call yarn to store the buffer into memory.
 	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
 				  args.begin(), args.end(),
-				  IMU->makeName(RET));
+				  IMU->makeName(RET, name));
 
 	// Make sure the stored value is of a compatible type.
-	Value* castVal = cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP));
+	Value* castVal = cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP, name));
 
 	// Write the value into the buffer and place this instruction before the call.
 	Instruction* storeInst = new StoreInst(castVal, bufferWordPtr);
@@ -599,11 +613,11 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 	// Place the call at the beginning of the BB.
 	retVal = CallInst::Create(IMU->getYarnDepStoreFastFct(), 
 				  args.begin(), args.end(),
-				  IMU->makeName(RET), &pos->front());
+				  IMU->makeName(RET, name), &pos->front());
 
 	// Make sure the stored value is of a compatible type.
 	Value* castInst = 
-	  cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP), &pos->front());
+	  cast(oldVal, IMU->getYarnWordType(), IMU->makeName(TEMP, name), &pos->front());
 
 	// Write the value into the buffer and place this instruction before the call.
 	new StoreInst(castInst, bufferWordPtr, &pos->front());	
@@ -623,6 +637,7 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
        it != itEnd; ++it)
   {
     const PointerInstr* ptrInstr = *it;
+    const std::string name = ptrInstr->getInstruction()->getName();
     
     if (ptrInstr->getType() == InstrLoad) {
       LoadInst* loadInst = map<LoadInst>::get(TmpVMap, ptrInstr->getInstruction());
@@ -630,7 +645,7 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
       // Cast the pointer for compatibility with yarn_dep call.
       Value* srcVoidPtr = 
 	cast(loadInst->getPointerOperand(), IMU->getVoidPtrType(), 
-	     IMU->makeName(TEMP), loadInst);
+	     IMU->makeName(TEMP, name), loadInst);
 
       // Call yarn_dep_load to load the desired value into the buffer.
       std::vector<Value*> args;
@@ -639,13 +654,13 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
       args.push_back(bufferVoidPtr); // dest
       Value* retVal = CallInst::Create(IMU->getYarnDepLoadFct(), 
 				       args.begin(), args.end(), 
-				       IMU->makeName(RET), loadInst);
+				       IMU->makeName(RET, name), loadInst);
       (void) retVal; // \todo do some error checking.
 
       // Make sure we load the right type out of the buffer.
       Value* castedBuffer = 
 	cast(bufferWordPtr, loadInst->getPointerOperand()->getType(), 
-	     IMU->makeName(TEMP), loadInst);
+	     IMU->makeName(TEMP, name), loadInst);
 
       // Load from the buffer which contains the result of the yarn call.
       loadInst->setOperand(0, castedBuffer);
@@ -656,7 +671,8 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 
       // convert the ptr to a void* for the yarn_dep call.
       Value* destVoidPtr = 
-	cast(storeInst->getPointerOperand(), IMU->getVoidPtrType(), IMU->makeName(TEMP));
+	cast(storeInst->getPointerOperand(), IMU->getVoidPtrType(), 
+	     IMU->makeName(TEMP, name));
 
       // call yarn_dep_load after the store instruction.
       std::vector<Value*> args;
@@ -665,7 +681,7 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
       args.push_back(destVoidPtr); // dest
       Instruction* retVal = CallInst::Create(IMU->getYarnDepStoreFct(), 
 				       args.begin(), args.end(), 
-				       IMU->makeName(RET));
+				       IMU->makeName(RET, name));
       (void) retVal; // \todo Do some error checking.
 
       // Insert both the instructions after the store instruction.
@@ -680,7 +696,7 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
       // Make sure the buffer receives the right type.
       Value* castedBuffer = 
 	cast(bufferWordPtr, storeInst->getPointerOperand()->getType(),
-	     IMU->makeName(TEMP), storeInst);
+	     IMU->makeName(TEMP, name), storeInst);
 
       // Store into the buffer which is then used by the yarn call.
       storeInst->setOperand(1, castedBuffer);
@@ -830,14 +846,14 @@ void InstrumentLoopUtil::instrumentSrcFct() {
     Value* ptr =
       GetElementPtrInst::Create(arrayPtr,
 				indexes.begin(), indexes.end(),
-				IMU->makeName(POINTER), instrHeader);
+				IMU->makeName(POINTER, ae->getName()), instrHeader);
     
     const Type* toCastType = entryValue ?
       entryValue->getType() : ae->getExitNode()->getType();
 
     Value* castedPtr = 
       cast(ptr, PointerType::getUnqual(toCastType), 
-	   IMU->makeName(POINTER), instrHeader);
+	   IMU->makeName(POINTER, ae->getName()), instrHeader);
 
     // Store the current value into the structure.
     if(entryValue) {
@@ -879,7 +895,10 @@ void InstrumentLoopUtil::instrumentSrcFct() {
     Value* oldVal = ae->getEntryValue();
 
     // Load the calc results into a variable.
-    Value* newVal = new LoadInst(ae->getPointer(), IMU->makeName(LOADED), instrHeader);
+    Value* newVal = 
+      new LoadInst(ae->getPointer(), IMU->makeName(LOADED, ae->getName()), 
+		   instrHeader);
+
     // Save it for when we do the footer.
     ae->setNewValue(newVal);
 
