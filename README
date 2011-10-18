@@ -7,8 +7,8 @@ The system is composed of :
   - yarnc      executable used to analyse and inject code into a source file.
   - yarnb      Benchmarking program used to test perfomances under various conditions.
 
-Building instructions of developpers using git tree. This project uses autotools so the 
-usual steps should work just fine:
+The build system for yarn uses autotools so developpers can build the project using the
+usual steps:
 
 autoreconf --install
 ./configure
@@ -16,3 +16,6 @@ make
 make check
 
 Note that the check target currently has linking issues so it will probably fail.
+
+Currently, yarnc is not integrated within this build system because it uses the 
+LLVM build system. In order to build yarnc, see the README file in the yarnc folder.

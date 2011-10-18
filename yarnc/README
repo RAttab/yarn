@@ -1,0 +1,42 @@
+The compiler component of the yarn project.
+
+Contains the LLVM analysis and transformation passes required to automatically
+instrument the target program.
+
+
+Building LLVM
+--------------------------------------------------------------------------------
+
+Because yarnc is implemented as optimization passes for LLVM, you will need the LLVM
+headers as well as the compiled libraries. More details on how to get and build the
+LLVM source code can be found here:
+
+http://llvm.org/docs/GettingStarted.html
+
+Note that I recommend using the following flags when calling configure for LLVM:
+
+--enable-assertion --enable-debug-runtime --enable-optimizations
+
+Once configured, you can build the debug or optimized version of LLVM by using:
+
+gmake ENABLE_OPTIMIZED=1
+
+
+Building yarnc
+--------------------------------------------------------------------------------
+
+
+The build system for yarnc is currently seperate from the main yarn autotools build
+because it uses LLVM build system. The full instructions can be found here:
+
+http://llvm.org/docs/Projects.html
+
+Simplified build instructions for developpers are as follow:
+
+autoconf/AutoRegen.sh
+./configure
+make ENABLE_OPTIMIZED=0
+
+AutoRegen.sh will ask that you provide the location of your LLVM source code and
+object directory. By default, these two locations are the same. Note that you should
+only enter full paths starting from the root of your filesystem.
