@@ -231,6 +231,7 @@ namespace {
 			     Value* bufferVoidPtr,
 			     const PointerInstr* ptrInstr);
 
+    void createTmpExitBB (BasicBlock* bb);
     void cleanupTmpFct(BasicBlock*);
 
   };
@@ -519,9 +520,10 @@ void InstrumentLoopUtil::createTmpFct () {
 
 
 
-void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal, 
+void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 					    Value* bufferWordPtr, 
-					    Value* bufferVoidPtr)
+					    Value* bufferVoidPtr,
+					    Value* argIndVar)
 {
   // Process the value accesses.
   typedef YarnLoop::ValueInstrList VIL;
@@ -537,6 +539,9 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
     }
     else if (valueInstr->getType() == InstrStore) {
       instrumentValueStore(poolIdVal, bufferWordPtr, bufferVoidPtr, valueInstr, ae);
+    }
+    else if (valueInstr->getType() == InstrIndVar) {
+      instrumentIndVar(argIndVar, valueInstr, ae);
     }
     else {
       assert(false && "Sanity check.");
@@ -565,12 +570,17 @@ void InstrumentLoopUtil::instrumentTmpBody (Value* poolIdVal,
 }
 
 
-void InstrumentLoopUtil::instrumentIndVar (Value* poolIdVal, 
-					   Value* bufferWordPtr, 
-					   Value* bufferVoidPtr,
-					   Value* indVar)
+void InstrumentLoopUtil::instrumentIndVar (Value* argIndVar, 
+					   const ValueInstr* valueInstr,
+					   const ArrayEntry* ae)
 {
   //! \todo fillme
+  PHINode* indVarNode = dyn_cast<PHINode>(valueInstr->getValue());
+
+
+  Function::iterator bbIt (instrHeader);      
+  replaceUsesInScope(bbIt, TmpFct->end(), entryVal, castedInvariant); 
+
 }
 
 

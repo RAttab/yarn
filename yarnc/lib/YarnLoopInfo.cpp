@@ -112,7 +112,10 @@ void ValueInstr::print (raw_ostream &OS) const {
 
   OS << LVL << "ValueInstr:\n";
 
-  OS << LVL2 << "Type = " << (Type == InstrLoad ? "Load" : "Store") << "\n";
+  OS << LVL2 << "Type = " 
+     << (Type == InstrLoad ? "Load" : 
+	 Type == InstrStore ? "Store" : "IndVar") 
+     << "\n";
   PRINT_VAL(OS, LVL2, V);
   PRINT_VAL(OS, LVL2, Pos);
 }
@@ -129,8 +132,11 @@ void ArrayEntry::print (raw_ostream &OS) const {
   PRINT_VAL(OS, LVL2, EntryValue);
   PRINT_VAL(OS, LVL2, ExitNode);
   OS << LVL2 << "IsInvariant = " << IsInvariant << "\n";
+  OS << LVL2 << "IsInduction = " << IsInduction << "\n";
   PRINT_VAL(OS, LVL2, Pointer);
   PRINT_VAL(OS, LVL2, NewValue);
+  if (getName().size() > 0)
+    OS << LVL2 << "Name = " << getName() << "\n";
 }
 
 
@@ -405,16 +411,27 @@ void YarnLoop::processInvariants (Instruction* Inst) {
 
 
 void YarnLoop::processArrayEntries () {
-  unsigned Index = 0;
+  // Index used for the fast versions of yarn_dep_load/store.
+  unsigned index = 0;
+
   for (ValueList::iterator it = Dependencies.begin(), itEnd = Dependencies.end();
        it != itEnd; ++it)
   {
     LoopValue* lv = *it;
+    bool isIndVar = lv->getHeaderNode() == L->getCanonicalInductionVariable();
 
-    ArrayEntry* ae = new ArrayEntry(lv->getEntryValue(), lv->getFooterNode(), false);
+    ArrayEntry* ae = 
+      new ArrayEntry(lv->getEntryValue(), lv->getFooterNode(), false, isIndVar);
     ArrayEntries.push_back(ae);
-    processValueInstrs(lv, Index);
-    Index++;
+
+    if (!isIndVar) {
+      processValueInstrs(lv, index);
+    }
+    else {
+      processIndVarInstr(lv, index);
+    }
+
+    index++;
   }
 
   for (PointerList::iterator it = Pointers.begin(), itEnd = Pointers.end(); 
@@ -429,7 +446,7 @@ void YarnLoop::processArrayEntries () {
     {
       Value* alias = *aliasIt;
       if (!isInLoop(L, alias)) {
-	ArrayEntry* ae = new ArrayEntry(alias, NULL, true);
+	ArrayEntry* ae = new ArrayEntry(alias, NULL, true, false);
 	ArrayEntries.push_back(ae);
       }
     }
@@ -440,7 +457,7 @@ void YarnLoop::processArrayEntries () {
   for (InvariantList::iterator it = Invariants.begin(), itEnd = Invariants.end();
        it != itEnd; ++it) 
   {
-    ArrayEntry* ae = new ArrayEntry(*it, NULL, true);
+    ArrayEntry* ae = new ArrayEntry(*it, NULL, true, false);
     ArrayEntries.push_back(ae);
   }
   
@@ -594,7 +611,6 @@ YarnLoop::BBPosList YarnLoop::findStorePos (Value* V) const {
 }
 
 
-// Ugliest for loops EVAR...
 void YarnLoop::processPointerInstrs (LoopPointer* lp) {
   typedef LoopPointer::AliasList AliasList;
 
@@ -632,12 +648,12 @@ void YarnLoop::processPointerInstrs (LoopPointer* lp) {
 }
  
 
- void YarnLoop::processValueInstrs (LoopValue* lv, unsigned index) {
-
-   std::set<Value*> itValues;
+void YarnLoop::processValueInstrs (LoopValue* lv, unsigned index) {
+  
+  std::set<Value*> itValues;
 
   if (!lv->isExitOnly()) {
-
+    
     // Load of the iteration values.
     {
       Value* startItVal = lv->getStartIterationValue();
@@ -683,7 +699,7 @@ void YarnLoop::processPointerInstrs (LoopPointer* lp) {
     if (itValues.find(exitingVal) != itValues.end()) {
       continue;
     }
-
+    
     BBPosList posList = findStorePos(exitingVal);
     
     for (BBPosList::iterator posIt = posList.begin(), posEndIt = posList.end();
@@ -693,9 +709,15 @@ void YarnLoop::processPointerInstrs (LoopPointer* lp) {
       ValueInstrs.push_back(vip);
     }
   }
-
 }    
 
+
+void YarnLoop::processIndVarInstr (LoopValue* lv, unsigned index) {
+  Value* indVar = L->getCanonicalInductionVariable();
+
+  ValueInstr* vip = new ValueInstr(InstrIndVar, indVar, NULL, index);
+  ValueInstrs.push_back(vip);
+}
 
 void YarnLoop::print (raw_ostream &OS) const {
   const std::string LVL = "\t";
@@ -782,6 +804,8 @@ bool YarnLoopInfo::runOnFunction (Function& F) {
       LoopValues += yLoop->getDependencies().size();
       LoopPointers += yLoop->getPointers().size();
       LoopInvariants += yLoop->getInvariants().size();
+
+      yLoop->print(errs());
        
     }
     else {

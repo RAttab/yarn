@@ -146,7 +146,8 @@ namespace yarn {
 /// Represents that type of instrumentation that needs to take place.
   enum InstrType {
     InstrLoad = 1,
-    InstrStore = 2
+    InstrStore = 2,
+    InstrIndVar = 3
   };
 
 
@@ -226,20 +227,24 @@ namespace yarn {
     llvm::Value* EntryValue;
     llvm::PHINode* ExitNode;
     bool IsInvariant;
+    bool IsInduction;
 
     llvm::Value* Pointer;
     llvm::Value* NewValue;
 
   public :
 
-    ArrayEntry(llvm::Value* EV, llvm::PHINode* EN, bool I):
-      EntryValue(EV), ExitNode(EN), IsInvariant(I), Pointer(NULL), NewValue(NULL)
+    ArrayEntry(llvm::Value* EV, llvm::PHINode* EN, bool Inv, bool IndVar):
+      EntryValue(EV), ExitNode(EN), IsInvariant(Inv), IsInduction(IndVar),
+      Pointer(NULL), NewValue(NULL)
     {}
 
     inline llvm::Value* getEntryValue() const { return EntryValue; }
     inline llvm::PHINode* getExitNode() const { return ExitNode; }
     inline bool getIsInvariant() const { return IsInvariant; }
+    inline bool getIsInduction() const { return IsInduction; }
 
+    //! Used by the transformation pass to hold the array value. (I think...)
     inline void setPointer (llvm::Value* P) { Pointer = P; }
     inline llvm::Value* getPointer() const { return Pointer; }
 
@@ -382,6 +387,8 @@ namespace yarn {
     void processPointerInstrs (LoopPointer* LP);
     /// Finds the instrumentation points for all the value dependencies.
     void processValueInstrs (LoopValue* LV, unsigned Index);
+    /// Creates an instrumentation point for the induction variable.
+    void processIndVarInstr (LoopValue* LV, unsigned Index);
 
 
 
