@@ -23,7 +23,7 @@ AC_PROG_RANLIB
 #AM_PROC_CC_C_0
 
 
-# PKG_CHECK_MODULES([CHECK], [check >= 0.9.4]) 
+PKG_CHECK_MODULES([CHECK], [check >= 0.9.4]) 
 
 
 # Check for libraries

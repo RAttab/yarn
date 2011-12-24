@@ -4,7 +4,7 @@
 # endif
 
 AM_CFLAGS = $(YARN_CFLAGS_DIAG) $(YARN_CFLAGS_LIB) -I$(srcdir)/../src
-LDADD = ../src/libyarn.a /usr/lib/libcheck.a $(YARN_LIBADD)
+LDADD = $(YARN_LIBADD) ../src/libyarn.a -lcheck
 
 
 #check_PROGRAMS = check_libyarn
